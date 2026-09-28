@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         媒体嗅探下载器
 // @namespace    local.media-grabber
-// @version      1.2.0
+// @version      1.2.1
 // @description  抓取网页里的 mp3 / m4a / mp4 和 m3u8(HLS) 视频，自动合并分片、必要时转成 MP4 保存到本机。手机上点右下角悬浮按钮使用。
 // @author       local
 // @match        *://*/*
@@ -60,6 +60,16 @@ const CSS = String.raw`/* 面板样式。同时用于网页内的 Shadow DOM 和
 .mg-root *::before,
 .mg-root *::after {
   box-sizing: border-box;
+}
+
+/*
+ * hidden 属性本身只是浏览器默认样式里的 display:none，
+ * 会被下面这些元素自己写的 display:flex / display:grid 盖掉——
+ * 于是 panel.hidden = true 设了属性、界面却还在（点 × 关不掉就是这个原因）。
+ * 这里统一兜底，别逐个元素去补。
+ */
+.mg-root [hidden] {
+  display: none !important;
 }
 
 /* ---------------------------------------------------------------- 悬浮按钮 */
@@ -647,10 +657,6 @@ const CSS = String.raw`/* 面板样式。同时用于网页内的 Shadow DOM 和
   display: flex;
   flex-direction: column;
   color: #f3f4f6;
-}
-
-.mg-viewer[hidden] {
-  display: none;
 }
 
 .mg-viewer-bar {

@@ -39,6 +39,16 @@
   box-sizing: border-box;
 }
 
+/*
+ * hidden 属性本身只是浏览器默认样式里的 display:none，
+ * 会被下面这些元素自己写的 display:flex / display:grid 盖掉——
+ * 于是 panel.hidden = true 设了属性、界面却还在（点 × 关不掉就是这个原因）。
+ * 这里统一兜底，别逐个元素去补。
+ */
+.mg-root [hidden] {
+  display: none !important;
+}
+
 /* ---------------------------------------------------------------- 悬浮按钮 */
 
 .mg-fab {
@@ -624,10 +634,6 @@
   display: flex;
   flex-direction: column;
   color: #f3f4f6;
-}
-
-.mg-viewer[hidden] {
-  display: none;
 }
 
 .mg-viewer-bar {

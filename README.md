@@ -241,6 +241,16 @@ HLS 的体积是**估算**，所以标了「约」：
 
 ---
 
+## 一个踩过的坑（说明为什么要统一处理 hidden）
+
+`hidden` 属性本身只是浏览器默认样式里的 `display: none`，**任何作者写的 `display: flex/grid`
+都会盖掉它**。面板本身就是 `display: flex`，于是 `panel.hidden = true` 设了属性、界面却还在
+——表现就是「点 × 关不掉」。同一个坑还影响了图片网格、媒体列表和空状态提示。
+
+现在 CSS 里用一条 `.mg-root [hidden] { display: none !important; }` 统一兜住，
+测试也改成断言 `getComputedStyle(...).display`（看真实渲染结果），而不是只看 `hidden` 属性——
+只看属性的话，这类 bug 会从测试里溜过去，之前就是这么溜过去的。
+
 ## 已知限制
 
 - **内存**：转封装需要在内存里过一遍数据。超过 400 MB 会自动改为保存原始 `.ts`（避免手机内存不足），

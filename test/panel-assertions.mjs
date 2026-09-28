@@ -124,10 +124,15 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
       const v = await page.eval(`(function(){
         var sr = document.querySelector('#mg-host').shadowRoot;
         var grid = sr.querySelector('.mg-grid');
-        if (!grid || grid.hidden) return null;
+        var list = sr.querySelector('.mg-list');
+        // 看实际渲染结果：hidden 属性会被 display:flex/grid 盖掉，只看属性会漏掉那类 bug
+        var show = function (el) { return el && getComputedStyle(el).display !== 'none'; };
+        if (!show(grid)) return null;
+        if (show(list)) return { bothVisible: true };
         var cells = grid.querySelectorAll('.mg-thumb');
         var imgs = grid.querySelectorAll('.mg-thumb img');
         return JSON.stringify({
+          bothVisible: false,
           cells: cells.length,
           imgs: imgs.length,
           firstSrc: imgs[0] ? imgs[0].getAttribute('src') : '',
@@ -138,10 +143,12 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
         });
       })()`);
       const o = JSON.parse(v || 'null');
+      if (o && o.bothVisible) return null; // 列表和网格同时可见说明切换没生效
       return o && o.cells >= 2 && o.imgs >= 2 ? o : null;
     },
     { timeout: 20000, label: '图片网格渲染' }
   );
+  check('切到图片页后，媒体列表真的被隐藏了（不是两个都显示）', grid.bothVisible === false);
   check('图片页渲染出缩略图网格', grid.cells >= 2, `${grid.cells} 格：${grid.names.join(' | ')}`);
   check('缩略图是真实 img 元素且懒加载', grid.imgs >= 2 && /^https?:/.test(grid.firstSrc) && grid.loading === 'lazy', grid.firstSrc.slice(0, 70));
   check('缩略图上也标了大小', grid.sizes.some((x) => /B|KB|MB/.test(x)), grid.sizes.join(', '));
@@ -178,8 +185,10 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
 
   await page.eval(`document.querySelector('#mg-host').shadowRoot.querySelector('.mg-viewer .mg-icon-btn').click()`);
   await sleep(400);
-  const closed = await page.eval(`document.querySelector('#mg-host').shadowRoot.querySelector('.mg-viewer').hidden`);
-  check('预览可以关闭', closed === true);
+  const closed = await page.eval(
+    `getComputedStyle(document.querySelector('#mg-host').shadowRoot.querySelector('.mg-viewer')).display === 'none'`
+  );
+  check('预览可以关闭（真的不显示了）', closed === true);
 
   // ---------------------------------------------- 视频预览
   const videoViewer = await waitFor(
@@ -215,6 +224,15 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
     },
     { timeout: 20000, label: '视频预览打开' }
   );
+  const backToMedia = JSON.parse(
+    await page.eval(`(function(){
+      var sr = document.querySelector('#mg-host').shadowRoot;
+      var show = function (el) { return el && getComputedStyle(el).display !== 'none'; };
+      return JSON.stringify({ grid: show(sr.querySelector('.mg-grid')), list: show(sr.querySelector('.mg-list')) });
+    })()`)
+  );
+  check('切回媒体页后，图片网格真的被隐藏了', backToMedia.grid === false && backToMedia.list === true, JSON.stringify(backToMedia));
+
   check(
     'mp4 能用播放器直接预览',
     videoViewer.tag === 'VIDEO' && /clip\.mp4$/.test(videoViewer.src) && videoViewer.controls,
@@ -254,4 +272,24 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
     var box = document.querySelector('#mg-host').shadowRoot.querySelector('.mg-viewer');
     if (!box.hidden) box.querySelector('.mg-icon-btn').click();
   })()`);
+
+  // ---------------------------------------------- 点 × 要真的把面板关掉
+  const closeResult = await (async () => {
+    await ensureOpen();
+    await sleep(300);
+    const before = await page.eval(
+      `getComputedStyle(document.querySelector('#mg-host').shadowRoot.querySelector('.mg-panel')).display`
+    );
+    await page.eval(`document.querySelector('#mg-host').shadowRoot.querySelector('.mg-close').click()`);
+    await sleep(400);
+    const after = await page.eval(
+      `getComputedStyle(document.querySelector('#mg-host').shadowRoot.querySelector('.mg-panel')).display`
+    );
+    return { before, after };
+  })();
+  check(
+    '点 × 面板真的消失（hidden 不会被 display:flex 盖掉）',
+    closeResult.before !== 'none' && closeResult.after === 'none',
+    `点之前 display=${closeResult.before}，点之后 display=${closeResult.after}`
+  );
 }
