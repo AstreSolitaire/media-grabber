@@ -310,8 +310,8 @@ async function readBody(res, range) {
  * 顺便把分片地址收集起来——界面上靠它把误列出来的分片隐藏掉。
  */
 async function playlistDuration(get, url, retries, collect) {
-  const text = await retry(async () => (await get(url, { timeoutMs: 8000 })).text(), { retries });
-  const parsed = parsePlaylist(text, url);
+  const res = await retry(async () => get(url, { timeoutMs: 8000 }), { retries });
+  const parsed = parsePlaylist(await res.text(), res.url || url);
   if (parsed.type !== 'media') return 0;
   if (collect) {
     if (parsed.map && parsed.map.url) collect(parsed.map.url);
@@ -337,8 +337,8 @@ export async function probeHls(options) {
     maxVariantsToMeasure = 8,
   } = options || {};
   const get = makeFetcher({ fetchImpl, referrer, credentials, extraHeaders: headers, retries });
-  const text = await retry(async () => (await get(url, { timeoutMs: 15000 })).text(), { retries });
-  let info = parsePlaylist(text, url);
+  const res = await retry(async () => get(url, { timeoutMs: 15000 }), { retries });
+  let info = parsePlaylist(await res.text(), res.url || url);
   const result = {
     url,
     type: info.type,
@@ -464,8 +464,10 @@ export async function downloadHls(options) {
   const get = makeFetcher({ fetchImpl, referrer, credentials, extraHeaders, retries });
 
   let playlistUrl = url;
-  let text = await retry(async () => (await get(playlistUrl)).text(), { retries });
-  let info = parsePlaylist(text, playlistUrl);
+  let res = await retry(async () => get(playlistUrl, { timeoutMs: 15000 }), { retries });
+  // 相对分片路径必须相对「重定向后的最终地址」来拼。
+  // 用请求前的地址会把分片拼到错的目录下——实测踩过：整条流 0/301 全部 404。
+  let info = parsePlaylist(await res.text(), res.url || playlistUrl);
   let chosenVariant = null;
 
   if (info.type === 'master') {
@@ -474,8 +476,8 @@ export async function downloadHls(options) {
     chosenVariant = selectVariant ? await selectVariant(usable, info) : pickBestVariant(usable);
     if (!chosenVariant || !chosenVariant.url) throw new Error('没有选择清晰度');
     playlistUrl = chosenVariant.url;
-    text = await retry(async () => (await get(playlistUrl)).text(), { retries });
-    const inner = parsePlaylist(text, playlistUrl);
+    const vRes = await retry(async () => get(playlistUrl, { timeoutMs: 15000 }), { retries });
+    const inner = parsePlaylist(await vRes.text(), vRes.url || playlistUrl);
     if (inner.type === 'master') throw new Error('播放列表嵌套了多层 master，暂不支持');
     info = inner;
   }
@@ -579,7 +581,14 @@ export async function downloadHls(options) {
     );
   } catch (e) {
     if (aborted) throw e;
-    throw new Error(`下载分片失败（已成功 ${done}/${segments.length}）：${e.message || e}`);
+    let where = '';
+    try {
+      const first = new URL(segments[0].url);
+      where = ` · 分片基地址 ${first.origin}${first.pathname.replace(/[^/]*$/, '')} · 首个分片 ${first.pathname.split('/').pop()}`;
+    } catch {
+      /* 忽略 */
+    }
+    throw new Error(`下载分片失败（已成功 ${done}/${segments.length}）：${e.message || e}${where}`);
   }
 
   return {

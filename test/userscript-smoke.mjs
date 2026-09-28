@@ -116,7 +116,7 @@ const PAGE = `<!doctype html>
   }, 300);
   // 分片名伪装成 .mp4 的普通流：用来验证分片会被折叠，而不是混在列表里
   fetch('mp4named/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__mp4named = t.length; });
-  fetch('mp4named/seg1-v1-a1.mp4').then(function(r){ return r.arrayBuffer(); }).then(function(b){ window.__mp4nameSeg = b.byteLength; });
+  fetch('mp4named/real/seg1-v1-a1.mp4').then(function(r){ return r.arrayBuffer(); }).then(function(b){ window.__mp4nameSeg = b.byteLength; });
   // 这条会被服务端按 Referer 校验：只有页面身份/播放器那种请求才拿得到
   fetch('protected/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__prot = t.length; });
   // 播放器也会去取分片；这里模拟一下，好验证分片会被折叠而不是混在列表里
@@ -452,7 +452,7 @@ async function main() {
     );
     check(
       '伪装成 .mp4 的分片没有混在列表里，被折叠起来了',
-      !fold.visible.some((u) => u.includes('/mp4named/seg')) && /显示疑似分片/.test(fold.showAll),
+      !fold.visible.some((u) => u.includes('/mp4named/real/seg')) && /显示疑似分片/.test(fold.showAll),
       `可见 ${fold.visible.length} 条：${fold.visible.map((u) => u.split('/').slice(-2).join('/')).join(' | ')}；折叠按钮「${fold.showAll}」`
     );
     const mp4 = files.find((f) => f.rel.endsWith('.mp4'));

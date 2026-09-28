@@ -89,7 +89,14 @@ export async function handleProtected(req, res, pathname, fixturesDir, prefix = 
 export async function handleMp4Named(req, res, pathname, fixturesDir, prefix = '/mp4named/') {
   if (!pathname.startsWith(prefix)) return false;
   const rel = decodeURIComponent(pathname.slice(prefix.length));
+
+  // 播放列表先 302 到子目录，分片是相对路径。
+  // 这样能测出「相对路径是否以重定向后的地址为基准」——用请求前的地址会全部 404
   if (rel === 'index.m3u8') {
+    res.writeHead(302, { location: `${prefix}real/index.m3u8` }).end();
+    return true;
+  }
+  if (rel === 'real/index.m3u8') {
     res
       .writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' })
       .end(
@@ -97,7 +104,7 @@ export async function handleMp4Named(req, res, pathname, fixturesDir, prefix = '
       );
     return true;
   }
-  const m = /^seg([12])-v1-a1\.mp4$/.exec(rel);
+  const m = /^real\/seg([12])-v1-a1\.mp4$/.exec(rel);
   if (m) {
     try {
       const buf = await readFile(path.join(fixturesDir, 'ts', `seg00${Number(m[1]) - 1}.ts`));
