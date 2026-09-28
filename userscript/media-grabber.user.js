@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         媒体嗅探下载器
 // @namespace    local.media-grabber
-// @version      1.0.0
+// @version      1.1.0
 // @description  抓取网页里的 mp3 / m4a / mp4 和 m3u8(HLS) 视频，自动合并分片、必要时转成 MP4 保存到本机。手机上点右下角悬浮按钮使用。
 // @author       local
 // @match        *://*/*

@@ -41,8 +41,11 @@ const server = http.createServer(async (req, res) => {
   // 把测试素材也发出去，方便在手机上跑真实测试
   if (url.pathname.startsWith('/f/')) {
     const rel = decodeURIComponent(url.pathname.slice(3));
-    const file = path.join(FIXTURES, rel);
-    if (!file.startsWith(FIXTURES)) {
+    // 测试页放在仓库里（不在生成的素材目录），但要让它的相对路径仍落在 /f/ 下，
+    // 页面里的 img/xxx、clip.mp4 才能取到素材
+    const file = rel === 'phone-test.html' ? path.join(ROOT, 'test', 'phone-test.html') : path.join(FIXTURES, rel);
+    const allowed = file.startsWith(FIXTURES) || file.startsWith(path.join(ROOT, 'test'));
+    if (!allowed) {
       res.writeHead(403).end('forbidden');
       return;
     }

@@ -12,7 +12,7 @@ const LIB = path.join(ROOT, 'extension', 'src', 'lib');
 const PARTS = path.join(ROOT, 'userscript', 'parts');
 const OUT = path.join(ROOT, 'userscript', 'media-grabber.user.js');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 /** 去掉 import 语句和 export 关键字，让模块代码能直接放进同一个作用域。 */
 function inlineModule(code, file) {
