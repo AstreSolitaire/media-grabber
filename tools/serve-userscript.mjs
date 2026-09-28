@@ -4,7 +4,7 @@
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { handleProtected, handleMp4Named } from  '../test/protected-route.mjs';
+import { handleProtected, handleMp4Named, handlePhStyle } from  '../test/protected-route.mjs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..');
@@ -52,6 +52,7 @@ const server = http.createServer(async (req, res) => {
   // 手机侧走 /f/protected/，复用与端到端测试同一份防盗链模拟
   if (await handleProtected(req, res, url.pathname, FIXTURES, '/f/protected/')) return;
   if (await handleMp4Named(req, res, url.pathname, FIXTURES, '/f/mp4named/')) return;
+      if (await handlePhStyle(req, res, url.pathname, FIXTURES, '/f/phstyle/')) return;
 
   if (url.pathname.startsWith('/f/')) {
     const rel = decodeURIComponent(url.pathname.slice(3));

@@ -95,8 +95,14 @@ const GM_SHIM = `
 })();
 `;
 
-const PAGE = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>用户脚本测试页</title></head>
+// 注意：脚本用「页面内联」的方式加载，而不是 CDP 的 addScriptToEvaluateOnNewDocument。
+// 后者创建的上下文没有 referrer 来源，会让「页面身份重发」在测试里永远失败——
+// 这个盲点之前误导过好几次排查。内联脚本就是真正的文档上下文，行为和篡改猴一致。
+const PAGE = (shim, script) => `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>用户脚本测试页</title>
+<script>${shim.replace(/<\/script/gi, '<\/script')}</script>
+<script>${script.replace(/<\/script/gi, '<\/script')}</script>
+</head>
 <body>
 <h1>userscript smoke</h1>
 <img src="img/photo.png" width="220" alt="photo">
@@ -114,6 +120,8 @@ const PAGE = `<!doctype html>
       .then(function (r) { window.__refFromPage = r.status; })
       .catch(function (e) { window.__refFromPage = 'ERR ' + e.message; });
   }, 300);
+  // 模仿 PH 行为：播放列表能取，分片缺 Referer 就回 404
+  fetch('phstyle/index-v1-a1.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__ph = t.length; });
   // 分片名伪装成 .mp4 的普通流：用来验证分片会被折叠，而不是混在列表里
   fetch('mp4named/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__mp4named = t.length; });
   fetch('mp4named/real/seg1-v1-a1.mp4').then(function(r){ return r.arrayBuffer(); }).then(function(b){ window.__mp4nameSeg = b.byteLength; });
@@ -229,7 +237,7 @@ async function main() {
   }
   const script = await readFile(SCRIPT, 'utf8');
   await ensureFixtures();
-  await writeFile(path.join(FIXTURES, 'userscript-smoke.html'), PAGE, 'utf8');
+  await writeFile(path.join(FIXTURES, 'userscript-smoke.html'), PAGE(GM_SHIM, script), 'utf8');
   const server = await startServer(FIXTURES);
 
   const profile = await mkdtemp(path.join(tmpdir(), 'mg-us-'));
@@ -280,13 +288,10 @@ async function main() {
     const page = await cdp.attach(pageTarget.targetId);
     await page.send('Runtime.enable');
     await page.send('Page.enable');
-    // 先装垫片，再装用户脚本，模拟 Tampermonkey 的 document-start 注入
-    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: GM_SHIM });
-    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: script });
     await page.send('Page.navigate', { url: server.base + 'userscript-smoke.html' });
 
     const state = await waitFor(async () => {
-      const v = await page.eval('JSON.stringify({ts: window.__ts, mp3: window.__mp3, fmp4: window.__fmp4, aes: window.__aes, prot: window.__prot})');
+      const v = await page.eval('JSON.stringify({ts: window.__ts, mp3: window.__mp3, fmp4: window.__fmp4, aes: window.__aes, prot: window.__prot, ph: window.__ph})');
       const o = JSON.parse(v || '{}');
       return o.ts && o.mp3 && o.fmp4 && o.aes && o.prot ? o : null;
     }, { timeout: 25000, label: '测试页请求完成' });
@@ -337,7 +342,7 @@ async function main() {
       for (var i = 0; i < rows.length; i++) {
         var meta = rows[i].querySelector('.mg-meta');
         var t = meta && meta.getAttribute('title');
-        if (t && t.indexOf('/mp4named/index.m3u8') >= 0) {
+        if (t && t.indexOf('/phstyle/index-v1-a1.m3u8') >= 0) {
           var bs = rows[i].querySelectorAll('.mg-btn');
           for (var j = 0; j < bs.length; j++) {
             if (bs[j].textContent === '清晰度') { bs[j].click(); return 'clicked:清晰度'; }

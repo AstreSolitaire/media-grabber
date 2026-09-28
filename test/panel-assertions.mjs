@@ -61,6 +61,14 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
       .map((ev) => (ev.params.args || []).map((a) => a.value ?? a.description ?? '').join(' '))
       .filter(Boolean);
     console.log('  面板日志:', logs.length ? NL + logs.slice(-8).join(NL) : '(无)');
+    const rows2 = await page.eval(`(function(){
+      var sr = document.querySelector('#mg-host').shadowRoot;
+      return JSON.stringify([].map.call(sr.querySelectorAll('.mg-item'), function(r){
+        var n = r.querySelector('.mg-name'), s = r.querySelector('.mg-size'), m = r.querySelector('.mg-meta');
+        return { name: n ? n.textContent : '', size: s ? s.textContent : '(无)', url: m ? (m.getAttribute('title')||'') : '' };
+      }));
+    })()`);
+    console.log('  当前列表:', NL + JSON.parse(rows2 || '[]').map((r) => `${r.name} [${r.size}] ${r.url.split('/').slice(-2).join('/')}`).join(NL));
     // 体积没补齐时，把后台的报错打出来（扩展端的请求是在 Service Worker 里发的）
     if (swSession) {
       const NL = String.fromCharCode(10) + '            ';
@@ -174,9 +182,12 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
           hasDownload: !!box.querySelector('.mg-btn')
         });
       })()`);
-      return JSON.parse(v || 'null');
+      const o = JSON.parse(v || 'null');
+      // 图片是异步加载的，等它真的有像素再算数，免得偶发
+      if (o && o.hasImg && !(o.naturalW > 0)) return null;
+      return o;
     },
-    { timeout: 20000, label: '图片预览打开' }
+    { timeout: 20000, label: '图片预览打开并加载完成' }
   );
   check('点缩略图打开全屏预览并显示图片', viewer.visible && viewer.hasImg && /^https?:/.test(viewer.src), viewer.src.slice(0, 70));
   check('预览里的图片真的加载出来了（有像素尺寸）', viewer.naturalW > 0 || viewer.complete, `naturalWidth=${viewer.naturalW}`);

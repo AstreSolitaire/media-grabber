@@ -8,6 +8,9 @@
 //   - 列表维护与下载编排（不需要额外的抓取页，GM 请求本身就跨域）
 // ============================================================================
 
+/** 排查用的开关：打开后会把每次探测的结果打到控制台 */
+const DEBUG_PROBE = false;
+
 const IS_TOP = (() => {
   try {
     return window.top === window;
@@ -567,6 +570,11 @@ async function probeSize(item) {
 async function probeItem(item) {
   try {
     const info = await probeHls({ url: item.url, fetchImpl: gmFetch, retries: 1 });
+    if (DEBUG_PROBE) {
+      console.log(
+        '[探测] ' + item.url + ' → ' + info.type + ' 时长=' + info.duration + ' 预估=' + info.estimatedBytes + ' 分片数=' + ((info.segmentUrls || []).length)
+      );
+    }
     hideSegmentsOf(info, item.url);
     if (ui) ui.setProbe(item.id, info, info.type === 'master' ? info.variants : []);
   } catch (e) {

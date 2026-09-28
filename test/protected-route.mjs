@@ -117,3 +117,39 @@ export async function handleMp4Named(req, res, pathname, fixturesDir, prefix = '
   res.writeHead(404).end('not found');
   return true;
 }
+
+/**
+ * 再一组：缺 Referer 时回 **404**（不是 403/410）。
+ * 真实站点就这么干——播放列表能取，分片却 404，用来验证「404 也要触发页面身份重发」。
+ */
+export async function handlePhStyle(req, res, pathname, fixturesDir, prefix = '/phstyle/') {
+  if (!pathname.startsWith(prefix)) return false;
+  const rel = decodeURIComponent(pathname.slice(prefix.length));
+  const ok = refererAllowed(req);
+  const notFound = () => res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not Found');
+
+  if (rel === 'index-v1-a1.m3u8') {
+    // 播放列表不带 Referer 也给（和 PH 一样）
+    res
+      .writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' })
+      .end(
+        ['#EXTM3U', '#EXT-X-TARGETDURATION:5', '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-VERSION:3', '#EXT-X-MEDIA-SEQUENCE:1', '#EXTINF:2.000,', 'seg-1-v1-a1.ts?validfrom=1&hash=abc', '#EXTINF:2.000,', 'seg-2-v1-a1.ts?validfrom=1&hash=abc', '#EXT-X-ENDLIST', ''].join(NL)
+      );
+    return true;
+  }
+  // 注意名字里有连字符：seg-1-v1-a1.ts（之前写成 seg1 导致路由永远 404）
+  const m = /^seg-?([12])-v1-a1\.ts$/.exec(rel.split('?')[0]);
+  if (m) {
+    // 分片：没带本站 Referer 就 404
+    if (!ok) return notFound() || true;
+    try {
+      const buf = await readFile(path.join(fixturesDir, 'ts', `seg00${Number(m[1]) - 1}.ts`));
+      res.writeHead(200, { 'content-type': 'video/mp2t', 'content-length': buf.length }).end(buf);
+    } catch {
+      notFound();
+    }
+    return true;
+  }
+  notFound();
+  return true;
+}

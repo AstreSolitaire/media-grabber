@@ -365,8 +365,14 @@ export function concatUint8(chunks, total) {
   return out;
 }
 
-/** 这些状态码通常意味着「服务端不愿意给你」，而不是地址写错了。 */
-export const BLOCKED_HTTP_STATUS = new Set([401, 403, 410, 451]);
+/**
+ * 这些状态码意味着「服务端不愿意给你」，而不是地址真的不存在。
+ *
+ * 特别注意 404：很多 CDN 用 404 而不是 403 来隐藏资源、打发它不认可的请求。
+ * 实测踩过——某站播放列表能取（200），分片却全部 404，而地址拼得一字不差，
+ * 差别只在请求没带页面 Referer。
+ */
+export const BLOCKED_HTTP_STATUS = new Set([400, 401, 403, 404, 405, 410, 412, 451]);
 
 export function isBlockedStatus(status) {
   return BLOCKED_HTTP_STATUS.has(Number(status));
@@ -382,7 +388,7 @@ export function explainHttpStatus(status, context = '') {
   if (code === 401) return `需要登录后才能取${where}（401）`;
   if (code === 403) return `服务器拒绝了请求${where}（403）：多半是防盗链校验，回播放页刷新一下再立即下载`;
   if (code === 410) return `地址已失效或被防盗链拦下${where}（410）：回播放页刷新一下再立即下载`;
-  if (code === 404) return `地址不存在${where}（404）：可能已经过期`;
+  if (code === 404) return `服务器拒绝了请求${where}（404）：有些 CDN 用 404 来隐藏资源，地址可能已过期`;
   if (code === 429) return `请求太频繁被限流${where}（429）：把并发数调小或稍后再试`;
   if (code >= 500) return `服务器出错${where}（${code}）：稍后重试`;
   return `HTTP ${code}${where}`;

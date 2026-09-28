@@ -155,9 +155,12 @@ test('withSizes=false 时不去读每档列表（用于只想看清晰度的场�
   assert.equal(info.variants[0].estimatedBytes, 0);
 });
 
-test('防盗链相关的状态码判定与说明', () => {
-  for (const c of [401, 403, 410, 451]) assert.ok(isBlockedStatus(c), c + ' 应算被拦');
-  for (const c of [200, 206, 301, 404, 429, 500]) assert.ok(!isBlockedStatus(c), c + ' 不算被拦');
+test('防盗链相关的状态码判定与说明（404 也算被拦）', () => {
+  // 有些 CDN 用 404 而不是 403 隐藏资源：实测某站播放列表 200、分片全 404，
+  // 地址一字不差，差别只在请求没带页面 Referer。所以 404 必须触发重发。
+  for (const c of [400, 401, 403, 404, 405, 410, 412, 451]) assert.ok(isBlockedStatus(c), c + ' 应算被拦');
+  // 429 是限流，立刻重发只会雪上加霜，所以不算「被拦」
+  for (const c of [200, 206, 301, 429, 500]) assert.ok(!isBlockedStatus(c), c + ' 不算被拦');
 
   // 410/403 的说明里必须带上「怎么办」，不能只是个状态码
   const m410 = explainHttpStatus(410, '取分片');

@@ -22,5 +22,7 @@ h3{margin:14px 0 6px}p{color:#aaa;margin:6px 0}</style></head>
   });
   fetch('audio.mp3').then(function(r){ return r.blob(); });
   fetch('fmp4/index.m3u8').then(function(r){ return r.text(); });
+  // 一条会被防盗链拒绝的流：用来验证「失败时的排障上报」这条链路
+  fetch('protected/index.m3u8').then(function(r){ return r.text(); });
 </script>
 </body></html>
