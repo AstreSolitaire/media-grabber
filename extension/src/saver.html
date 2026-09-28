@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>媒体抓取中…</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1b1d21;
+        --muted: #6b7280;
+        --line: #e6e8ec;
+        --accent: #2563eb;
+        --soft: #f4f5f7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1f24;
+          --fg: #e8eaed;
+          --muted: #9aa3af;
+          --line: #33383f;
+          --accent: #6ea8fe;
+          --soft: #262a30;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 4px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0 0 16px;
+      }
+      .job {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      .job-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .job-name {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .job-pct {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .bar {
+        height: 6px;
+        background: var(--soft);
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 8px 0 6px;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.2s ease;
+      }
+      .bar > i.indet {
+        width: 35%;
+        animation: slide 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes slide {
+        from {
+          margin-left: 0;
+        }
+        to {
+          margin-left: 65%;
+        }
+      }
+      .job-state {
+        color: var(--muted);
+        font-size: 12.5px;
+        word-break: break-all;
+      }
+      .job.done .bar > i {
+        background: #10b981;
+      }
+      .job.error {
+        border-color: #dc2626;
+      }
+      .job.error .bar > i {
+        background: #dc2626;
+      }
+      .empty {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>媒体抓取中</h1>
+    <p class="hint">这个页面在后台把分片抓下来并整理成单个文件，完成后会自动关闭，可以不用管它。</p>
+    <div id="jobs"></div>
+    <p class="empty" id="empty">当前没有任务。</p>
+    <script type="module" src="saver.js"></script>
+  </body>
+</html>

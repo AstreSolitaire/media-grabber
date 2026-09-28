@@ -1,0 +1,12 @@
+# 生成的测试素材（用 npm run fixtures 重新生成，约 20MB）
+test/tmp/
+
+# 构建产物（用 npm run build / build:userscript 重新生成）
+# 注意：build/ 里有签名私钥 media-grabber.pem，绝不要提交
+build/
+
+# 依赖与系统杂项
+node_modules/
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,459 @@
+/* 面板样式。同时用于网页内的 Shadow DOM 和扩展弹窗，
+   所以变量定义在 .mg-root 上而不是 :root，避免依赖外层文档。 */
+
+.mg-root {
+  --mg-bg: #ffffff;
+  --mg-fg: #1b1d21;
+  --mg-muted: #6b7280;
+  --mg-line: #e6e8ec;
+  --mg-accent: #2563eb;
+  --mg-accent-fg: #ffffff;
+  --mg-soft: #f4f5f7;
+  --mg-danger: #dc2626;
+  --mg-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+  --mg-radius: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--mg-fg);
+  box-sizing: border-box;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mg-root {
+    --mg-bg: #1c1f24;
+    --mg-fg: #e8eaed;
+    --mg-muted: #9aa3af;
+    --mg-line: #33383f;
+    --mg-accent: #6ea8fe;
+    --mg-accent-fg: #10213d;
+    --mg-soft: #262a30;
+    --mg-danger: #f87171;
+    --mg-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.mg-root *,
+.mg-root *::before,
+.mg-root *::after {
+  box-sizing: border-box;
+}
+
+/* ---------------------------------------------------------------- 悬浮按钮 */
+
+.mg-fab {
+  position: fixed;
+  right: 14px;
+  bottom: 88px;
+  z-index: 2147483000;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  background: var(--mg-accent);
+  color: var(--mg-accent-fg);
+  box-shadow: var(--mg-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mg-fab:active {
+  transform: scale(0.94);
+}
+
+.mg-root.mg-open .mg-fab {
+  display: none;
+}
+
+.mg-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- 面板 */
+
+.mg-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2147483001;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(72vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  border: 1px solid var(--mg-line);
+  border-radius: var(--mg-radius);
+  box-shadow: var(--mg-shadow);
+  overflow: hidden;
+}
+
+.mg-root.mg-embedded {
+  width: 100%;
+  height: 100%;
+}
+
+.mg-root.mg-embedded .mg-panel {
+  position: static;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 560px) {
+  .mg-panel {
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 76vh;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+.mg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mg-line);
+  background: var(--mg-bg);
+}
+
+.mg-title {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mg-count {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--mg-soft);
+  color: var(--mg-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.mg-head-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.mg-icon-btn {
+  border: 1px solid var(--mg-line);
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.mg-icon-btn:active {
+  background: var(--mg-soft);
+}
+
+.mg-notice {
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--mg-soft);
+  color: var(--mg-fg);
+  border-bottom: 1px solid var(--mg-line);
+}
+
+/* ---------------------------------------------------------------- 下载任务 */
+
+.mg-jobs:empty {
+  display: none;
+}
+
+.mg-jobs {
+  border-bottom: 1px solid var(--mg-line);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.mg-job-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mg-job-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mg-job-pct {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+}
+
+.mg-job-cancel {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.mg-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--mg-soft);
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+
+.mg-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--mg-accent);
+  transition: width 0.2s ease;
+}
+
+.mg-bar > i.mg-bar-indet {
+  width: 35%;
+  animation: mg-slide 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes mg-slide {
+  from {
+    margin-left: 0;
+  }
+  to {
+    margin-left: 65%;
+  }
+}
+
+.mg-job-state {
+  font-size: 12px;
+  color: var(--mg-muted);
+}
+
+/* ---------------------------------------------------------------- 列表 */
+
+.mg-list {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-height: 0;
+}
+
+.mg-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mg-line);
+}
+
+.mg-item:last-child {
+  border-bottom: none;
+}
+
+.mg-chip {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  background: var(--mg-soft);
+  color: var(--mg-muted);
+  white-space: nowrap;
+}
+
+.mg-chip-audio {
+  background: rgba(16, 185, 129, 0.16);
+  color: #0f9d70;
+}
+
+.mg-chip-video {
+  background: rgba(59, 130, 246, 0.16);
+  color: #2563eb;
+}
+
+.mg-chip-hls {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mg-chip-audio {
+    color: #4ade80;
+  }
+  .mg-chip-video {
+    color: #93c5fd;
+  }
+  .mg-chip-hls {
+    color: #fcd34d;
+  }
+}
+
+.mg-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mg-name {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-meta {
+  font-size: 12px;
+  color: var(--mg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-item-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mg-btn {
+  border: none;
+  background: var(--mg-accent);
+  color: var(--mg-accent-fg);
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.mg-btn:active {
+  opacity: 0.85;
+}
+
+.mg-btn-ghost {
+  background: var(--mg-soft);
+  color: var(--mg-fg);
+}
+
+.mg-btn-sm {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+
+.mg-copy {
+  min-height: 36px;
+}
+
+.mg-variants {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+.mg-variant-hint {
+  font-size: 12.5px;
+  color: var(--mg-muted);
+}
+
+.mg-empty {
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--mg-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------------- 底部 */
+
+.mg-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--mg-line);
+  background: var(--mg-bg);
+  flex-wrap: wrap;
+}
+
+.mg-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--mg-fg);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.mg-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--mg-accent);
+}
+
+.mg-foot-btn {
+  border: 1px solid var(--mg-line);
+  background: var(--mg-bg);
+  color: var(--mg-fg);
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mg-foot-btn:active {
+  background: var(--mg-soft);
+}

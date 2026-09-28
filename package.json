@@ -1,0 +1,19 @@
+{
+  "name": "media-grabber",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "浏览器扩展：嗅探网页中的 mp3 / m3u8 / mp4 等媒体并保存到本地。本 package.json 仅用于让 Node 以 ESM 方式运行测试脚本，扩展本体在 extension/ 目录。",
+  "scripts": {
+    "test": "node test/run-all.mjs",
+    "test:fast": "set MG_SKIP_SMOKE=1&& node test/run-all.mjs",
+    "test:smoke": "node test/smoke.mjs",
+    "test:userscript": "node test/userscript-smoke.mjs",
+    "verify": "node tools/verify.mjs",
+    "fixtures": "node test/make-fixtures.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "build": "node tools/build.mjs",
+    "build:userscript": "node tools/build-userscript.mjs",
+    "serve:userscript": "node tools/serve-userscript.mjs"
+  }
+}
