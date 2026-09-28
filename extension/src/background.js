@@ -1,8 +1,8 @@
 // 后台 service worker：负责嗅探响应头、维护每个标签页的媒体列表、
 // 路由界面消息，并把下载任务派给下载管理器或 saver 页面。
 
-import { classify, isMediaKind, worthSniffing } from './lib/detect.js';
-import { guessFilename, sanitizeFilename } from './lib/util.js';
+import { classify, isMediaKind, isImageKind, isImageContentType, worthSniffing, TINY_IMAGE_BYTES } from './lib/detect.js';
+import { guessFilename, sanitizeFilename, extOf, isGenericName, composeNameFromTitle } from './lib/util.js';
 import { probeHls } from './lib/hls.js';
 
 const SAVER_PAGE = 'src/saver.html';
@@ -52,50 +52,18 @@ function hostOf(url) {
   }
 }
 
-function extOf(url) {
-  try {
-    const m = /\.([a-zA-Z0-9]{1,5})$/.exec(new URL(url).pathname);
-    return m ? '.' + m[1].toLowerCase() : '';
-  } catch {
-    return '';
-  }
-}
-
-/** 上一级目录名，用来区分同一页面上的多条同名媒体。 */
-function parentName(url) {
-  try {
-    const parts = new URL(url).pathname.split('/').filter(Boolean);
-    if (parts.length < 2) return '';
-    const dir = decodeURIComponent(parts[parts.length - 2]);
-    return /^[A-Za-z0-9_-]{1,20}$/.test(dir) ? dir : '';
-  } catch {
-    return '';
-  }
-}
-
-/** index.m3u8 / master.m3u8 / video.mp4 这类名字没信息量，遇到就拿页面标题替换。 */
-function isGenericName(name) {
-  const base = String(name || '').replace(/\.[a-z0-9]{2,5}$/i, '');
-  return /^(index|master|playlist|media|video|audio|stream|main|out|hls|dash|file|movie|\d+|segment|master_?playlist)$/i.test(base);
-}
-
 /**
  * 用页面标题给条目起个好名字。
  * 时序上标题（document_start）通常早于媒体请求，但也可能反过来，所以两条路都要能改名。
+ * 取名与去重的规则放在 lib/util.js 里，用户脚本用的是同一份实现。
  */
 function renameWithTitle(tabId, item, map) {
   const title = titleByTab.get(tabId);
   if (!title) return item;
   const ext = item.ext || extOf(item.url);
-  const base = sanitizeFilename(String(title).replace(/\.[a-z0-9]{2,5}$/i, ''), 'media');
-  if (!base) return item;
-  let candidate = base + ext;
-  const clash = [...map.values()].some((v) => v.id !== item.id && v.filename === candidate);
-  if (clash) {
-    const dir = parentName(item.url);
-    if (dir && !base.endsWith('-' + dir)) candidate = `${base}-${dir}${ext}`;
-  }
-  item.filename = candidate;
+  const taken = [...map.values()].filter((v) => v.id !== item.id).map((v) => v.filename);
+  const candidate = composeNameFromTitle(title, ext, item.url, taken);
+  if (candidate) item.filename = candidate;
   item.title = title;
   return item;
 }
@@ -249,9 +217,10 @@ function addItem(tabId, raw) {
     return true;
   }
 
-  if (!isMediaKind(classified.kind)) {
-    // 类型不明但扩展名明显是媒体的，仍然留下
-    if (!/^(mp3|mp4|m4a|aac|flac|wav|ogg|opus|webm|mkv|mov|avi|flv|m3u8|m3u)$/.test(ext)) return false;
+  const KNOWN_EXT = /^(mp3|mp4|m4a|aac|flac|wav|ogg|opus|webm|mkv|mov|avi|flv|m3u8|m3u|mpd|jpg|jpeg|jfif|png|gif|webp|avif|bmp|svg|ico|heic|heif|tif|tiff)$/;
+  if (!isMediaKind(classified.kind) && !isImageKind(classified.kind)) {
+    // 类型不明但扩展名明显是媒体或图片的，仍然留下
+    if (!KNOWN_EXT.test(ext)) return false;
   }
 
   const id = itemId(url);
@@ -267,6 +236,13 @@ function addItem(tabId, raw) {
           hint: '',
         });
 
+  // 体积取谁：响应头里的 Content-Length/Content-Range 是权威值；
+  // 资源时间线给的可能只是视频元素取的那一小段，不能拿来覆盖。
+  const incomingSize = Number(raw.size) || 0;
+  const fromHeaders = raw.via === 'webRequest';
+  let size = incomingSize || (prev && prev.size) || 0;
+  if (prev && prev.size > 0 && prev.via === 'webRequest' && !fromHeaders) size = prev.size;
+
   const item = {
     id,
     url,
@@ -274,16 +250,18 @@ function addItem(tabId, raw) {
     ext: classified.ext || (prev && prev.ext) || '',
     contentType: raw.contentType || (prev && prev.contentType) || '',
     contentDisposition: raw.contentDisposition || (prev && prev.contentDisposition) || '',
-    size: Number(raw.size) || (prev && prev.size) || 0,
+    size,
+    via: fromHeaders ? 'webRequest' : raw.via || (prev && prev.via) || '',
     filename: filename || (prev && prev.filename) || '',
     host: hostOf(url),
     pageUrl: raw.pageUrl || (prev && prev.pageUrl) || '',
     title: titleByTab.get(tabId) || (prev && prev.title) || '',
-    via: raw.via || (prev && prev.via) || '',
     suspect: false,
     foundAt: prev ? prev.foundAt : Date.now(),
   };
   if (isGenericName(item.filename)) renameWithTitle(tabId, item, map);
+  // 几百字节的图片基本是图标、分隔线或埋点像素，默认折叠到「小图标」里
+  if (item.kind === 'image' && item.size > 0 && item.size < TINY_IMAGE_BYTES) item.suspect = true;
   map.set(id, item);
   schedulePersist();
   return true;
@@ -360,18 +338,27 @@ chrome.webRequest.onHeadersReceived.addListener(
 
     let contentType = '';
     let disposition = '';
-    let size = 0;
+    let contentLength = 0;
+    let rangeTotal = 0;
     for (const h of details.responseHeaders || []) {
       const name = h.name.toLowerCase();
       if (name === 'content-type') contentType = h.value || '';
       else if (name === 'content-disposition') disposition = h.value || '';
-      else if (name === 'content-length') size = Number(h.value) || 0;
+      else if (name === 'content-length') contentLength = Number(h.value) || 0;
+      else if (name === 'content-range') {
+        // 带 Range 的请求（视频元素很常见）只返回一段，Content-Length 是那一段的长度，
+        // Content-Range 里的总长度才是文件真实大小。
+        const m = /\/\s*(\d+)\s*$/.exec(h.value || '');
+        if (m) rangeTotal = Number(m[1]) || 0;
+      }
     }
+    const size = rangeTotal || contentLength;
     // 只有少数内容类型才需要看，避免把接口请求全记下来
     const ct = contentType.toLowerCase().split(';')[0].trim();
     const interesting =
       ct.startsWith('audio/') ||
       ct.startsWith('video/') ||
+      isImageContentType(ct) ||
       ct === 'application/vnd.apple.mpegurl' ||
       ct === 'application/x-mpegurl' ||
       ct === 'audio/mpegurl' ||
@@ -794,20 +781,13 @@ const HANDLERS = {
           type: 'mg:variants',
           id: msg.id,
           variants: info.type === 'master' ? info.variants : [],
+          info,
         });
-        if (info.type === 'media') {
-          await notify(tabId, {
-            type: 'mg:notice',
-            text: `这是一个普通播放列表（约 ${Math.round(info.duration)} 秒${info.isLive ? '，直播' : ''}），可直接按最高码率下载。`,
-            ms: 4000,
-          });
-        }
       }
       return info;
     } catch (e) {
       if (tabId != null) {
-        await notify(tabId, { type: 'mg:variants', id: msg.id, variants: null });
-        await notify(tabId, { type: 'mg:notice', text: '读取清晰度失败：' + (e.message || e), ms: 4000 });
+        await notify(tabId, { type: 'mg:variants', id: msg.id, variants: null, info: { error: String((e && e.message) || e) } });
       }
       return { error: String((e && e.message) || e) };
     }

@@ -199,7 +199,26 @@ export async function ensureFixtures() {
     await writeFile(path.join(byterange, 'index.m3u8'), lines.join('\n'), 'utf8');
   }
 
-  // 11. 直播风格播放列表（没有 ENDLIST），只验证解析与提示
+  // 11. 图片：一张正常照片 + 一个极小的图标（用来验证小图会被折叠）
+  const img = path.join(FIXTURES, 'img');
+  if (!(await exists(path.join(img, 'photo.png')))) {
+    await mkdir(img, { recursive: true });
+    await ff(['-f', 'lavfi', '-i', 'testsrc2=size=640x480:duration=1', '-frames:v', '1', path.join(img, 'photo.png')]);
+    await ff(['-f', 'lavfi', '-i', 'testsrc2=size=2x2:duration=1', '-frames:v', '1', path.join(img, 'tiny-icon.png')]);
+    await ff(['-f', 'lavfi', '-i', 'testsrc2=size=320x180:duration=1', '-frames:v', '1', path.join(img, 'banner.jpg')]);
+  }
+
+  // 12. 渐进式 mp4：用来验证「预览」能直接播放
+  if (!(await exists(path.join(FIXTURES, 'clip.mp4')))) {
+    await ff([
+      ...VIDEO('320x180', 15), ...AUDIO(770), '-t', '3',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', '30',
+      '-c:a', 'aac', '-movflags', '+faststart',
+      path.join(FIXTURES, 'clip.mp4'),
+    ]);
+  }
+
+  // 13. 直播风格播放列表（没有 ENDLIST），只验证解析与提示
   const live = path.join(FIXTURES, 'live');
   if (!(await exists(path.join(live, 'index.m3u8')))) {
     await mkdir(live, { recursive: true });

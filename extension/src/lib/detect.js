@@ -6,6 +6,10 @@ const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'flac', 'wav', 'ogg', 'og
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'webm', 'mkv', 'mov', 'flv', 'avi', 'ts', 'm4s', '3gp', 'mpg', 'mpeg', 'ogv', 'wmv', 'f4v']);
 const PLAYLIST_EXT = new Set(['m3u8', 'm3u']);
 const DASH_EXT = new Set(['mpd']);
+const IMAGE_EXT = new Set(['jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg', 'ico', 'heic', 'heif', 'tif', 'tiff']);
+
+// 这些扩展名基本不可能是媒体，直接不看（图片单独判断，见 worthSniffing）
+const NEVER_EXT = new Set(['js', 'mjs', 'css', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'map', 'json', 'html', 'htm', 'xml', 'txt', 'wasm', 'pdf']);
 
 const HLS_TYPES = new Set([
   'application/vnd.apple.mpegurl',
@@ -17,7 +21,7 @@ const HLS_TYPES = new Set([
 ]);
 
 /**
- * @returns {{kind:'hls'|'dash'|'audio'|'video'|'playlist'|'unknown', ext:string, why:string}}
+ * @returns {{kind:'hls'|'dash'|'audio'|'video'|'image'|'playlist'|'unknown', ext:string, why:string}}
  */
 export function classify({ url = '', contentType = '', contentDisposition = '' } = {}) {
   const ct = String(contentType).toLowerCase().split(';')[0].trim();
@@ -27,6 +31,7 @@ export function classify({ url = '', contentType = '', contentDisposition = '' }
   // 1) Content-Type 最可靠
   if (HLS_TYPES.has(ct)) return { kind: 'hls', ext: '.m3u8', why: 'content-type' };
   if (ct === 'application/dash+xml') return { kind: 'dash', ext: '.mpd', why: 'content-type' };
+  if (ct.startsWith('image/')) return { kind: 'image', ext: '', why: 'content-type' };
   if (ct.startsWith('audio/')) {
     if (ct === 'audio/mpegurl' || ct === 'audio/x-mpegurl') return { kind: 'hls', ext: '.m3u8', why: 'content-type' };
     return { kind: 'audio', ext: '', why: 'content-type' };
@@ -39,6 +44,7 @@ export function classify({ url = '', contentType = '', contentDisposition = '' }
   // 2) 扩展名
   if (PLAYLIST_EXT.has(ext)) return { kind: 'hls', ext: '.m3u8', why: 'ext' };
   if (DASH_EXT.has(ext)) return { kind: 'dash', ext: '.mpd', why: 'ext' };
+  if (IMAGE_EXT.has(ext)) return { kind: 'image', ext: '.' + ext, why: 'ext' };
   if (AUDIO_EXT.has(ext)) return { kind: 'audio', ext: '.' + ext, why: 'ext' };
   if (VIDEO_EXT.has(ext)) return { kind: 'video', ext: '.' + ext, why: 'ext' };
 
@@ -50,9 +56,10 @@ export function classify({ url = '', contentType = '', contentDisposition = '' }
     return { kind: 'unknown', ext: '', why: 'weak-hls-hint' };
   }
   if (ct === 'application/octet-stream' || ct === '') {
-    if (contentDisposition && /\.(mp4|mp3|m4a|flv|mkv|webm|ts)\b/i.test(contentDisposition)) {
+    if (contentDisposition && /\.(mp4|mp3|m4a|flv|mkv|webm|ts|jpg|png|webp)\b/i.test(contentDisposition)) {
       const e = /\.([a-z0-9]{2,5})\b/i.exec(contentDisposition);
-      return { kind: VIDEO_EXT.has(e[1].toLowerCase()) ? 'video' : 'audio', ext: '.' + e[1].toLowerCase(), why: 'disposition' };
+      const kind = IMAGE_EXT.has(e[1].toLowerCase()) ? 'image' : VIDEO_EXT.has(e[1].toLowerCase()) ? 'video' : 'audio';
+      return { kind, ext: '.' + e[1].toLowerCase(), why: 'disposition' };
     }
   }
   return { kind: 'unknown', ext: '', why: '' };
@@ -62,25 +69,42 @@ export function isMediaKind(kind) {
   return kind === 'audio' || kind === 'video' || kind === 'hls' || kind === 'dash';
 }
 
+export function isImageKind(kind) {
+  return kind === 'image';
+}
+
 /**
- * 判断一个 URL 值不值得记下来。避免把图片、字体、CSS、埋点都塞进列表。
- * 返回 false 表示明确无关；返回 true 表示候选（后续还会用响应头再确认一次）。
+ * 判断一个 URL 值不值得记下来。避免把脚本、字体、埋点都塞进列表。
+ * 图片默认也收，但要求是「图片请求」本身，CSS/脚本里引用到的不算。
  */
-export function worthSniffing(url, { requestType = '' } = {}) {
+export function worthSniffing(url, { requestType = '', images = true } = {}) {
   if (!url) return false;
   const u = String(url);
   if (u.startsWith('blob:') || u.startsWith('data:') || u.startsWith('filesystem:')) return false;
   if (!/^https?:/i.test(u)) return false;
   const ext = urlExt(u);
-  if (['js', 'css', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'map', 'json', 'html', 'htm', 'xml', 'txt'].includes(ext)) {
-    // 但 ?file=x.mp4 这种偶尔也有，交给 contentType 兜底，这里先排除纯静态资源
-    return false;
+  if (NEVER_EXT.has(ext)) return false;
+  if (IMAGE_EXT.has(ext)) {
+    if (!images) return false;
+    // 只有真正作为图片/资源加载的才算，避免把 a[href] 里的图标地址当图片
+    return requestType === 'image' || requestType === 'xmlhttprequest' || requestType === 'other' || requestType === '';
   }
   if (requestType === 'media' || requestType === 'object' || requestType === 'xmlhttprequest' || requestType === 'other' || requestType === '') {
     return true;
   }
+  // 经 fetch/XHR 拿到的图片或媒体，requestType 会是 image
+  if (requestType === 'image') return true;
   return false;
 }
+
+/** Content-Type 是不是图片，用于只有响应头没有扩展名的场景。 */
+export function isImageContentType(contentType) {
+  return String(contentType).toLowerCase().split(';')[0].trim().startsWith('image/');
+}
+
+/** 小于这个体积的图片多半是图标、分隔线、埋点像素，默认折叠起来。 */
+export const TINY_IMAGE_BYTES = 2048;
+
 
 /**
  * 合并同一条媒体的多次观测结果。后来拿到的响应头/长度能补全早先只有 URL 的记录。

@@ -79,8 +79,7 @@
       onProbe: async (item) => {
         if (tabId == null) return;
         const info = await send({ type: 'mg:probe', tabId, id: item.id, url: item.url });
-        if (info && info.variants) ui.setVariants(item.id, info.variants);
-        else ui.setVariants(item.id, []);
+        ui.setProbe(item.id, info && !info.error ? info : null, (info && info.variants) || null);
       },
       onClear: async () => {
         if (tabId == null) return;

@@ -12,6 +12,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { ensureFixtures, FIXTURES } from './make-fixtures.mjs';
 import { startServer } from './static-server.mjs';
+import { runPanelAssertions } from './panel-assertions.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.join(import.meta.dirname, '..');
@@ -203,6 +204,10 @@ const PAGE = `<!doctype html>
 <body>
 <h1>media sniff smoke test</h1>
 <video id="v" controls width="320"></video>
+<img src="img/photo.png" width="220" alt="photo">
+<img src="img/banner.jpg" width="220" alt="banner">
+<img src="img/tiny-icon.png" width="8" alt="tiny">
+<video id="pv" src="clip.mp4" controls muted width="220"></video>
 <a href="/ts/index.m3u8">m3u8</a>
 <script>
   // 分别用 fetch / XHR 取播放列表，主世界钩子两条路径都要能抓到
@@ -364,10 +369,35 @@ async function main() {
         return JSON.parse(v || 'null');
       },
       { timeout: 25000, label: '页面内面板出现并列出条目' }
-    );
+    ).catch(async (e) => {
+      console.log('  —— 诊断 ——');
+      console.log('  window.MGUI:', await page.eval('typeof window.MGUI'));
+      console.log('  #mg-host:', await page.eval('!!document.querySelector("#mg-host")'));
+      const errs = page.events
+        .filter((ev) => ev.method === 'Runtime.exceptionThrown' || (ev.method === 'Log.entryAdded' && ev.params.entry.level === 'error'))
+        .map((ev) => ev.params.exceptionDetails?.exception?.description || ev.params.entry?.text || '');
+      const NL = String.fromCharCode(10) + '            ';
+      console.log('  页面报错:', errs.length ? NL + errs.slice(0, 5).join(NL) : '(无)');
+      if (swSession) {
+        const tabs = await swSession
+          .eval('chrome.storage.session.get("mgTabs").then(function(o){ return JSON.stringify(Object.keys(o.mgTabs||{}).map(function(k){ return k + ":" + (o.mgTabs[k]||[]).length; })); })')
+          .catch((err) => '读取失败 ' + err.message);
+        console.log('  后台记录的条目:', tabs);
+        const swErr = swSession.errors();
+        console.log('  后台报错:', swErr.length ? NL + swErr.slice(0, 5).join(NL) : '(无)');
+      }
+      const logs = page.events
+        .filter((ev) => ev.method === 'Runtime.consoleAPICalled')
+        .map((ev) => (ev.params.args || []).map((a) => a.value ?? a.description ?? '').join(' '));
+      console.log('  页面日志:', logs.length ? NL + logs.slice(0, 8).join(NL) : '(无)');
+      throw e;
+    });
     check('页面内悬浮面板已挂载并列出条目', panel.rows >= 3, `${panel.rows} 行：${panel.names.join(' | ')}`);
     check('列表里是 m3u8 / 音频，而不是 .ts 分片', panel.urls.some((u) => u.endsWith('index.m3u8')) && !panel.urls.some((u) => /\/seg\d+\.ts$/.test(u)));
     check('文件名用了页面标题，不是光秃秃的 index.m3u8', panel.names.some((n) => n.includes('HLS 测试页')), panel.names.join(' | '));
+
+    // ---- 体积显示、图片分页与预览（与用户脚本共用同一套界面）----
+    await runPanelAssertions({ page, check, sleep, waitFor, swSession });
 
     // 5) 点 m3u8 的下载按钮，走完 抓取 → 转封装 → 落盘
     const clicked = await page.eval(`(function(){
@@ -377,9 +407,11 @@ async function main() {
         var meta = rows[i].querySelector('.mg-meta');
         var title = meta && meta.getAttribute('title');
         if (title && title.indexOf('/ts/index.m3u8') >= 0) {
-          var btn = rows[i].querySelector('.mg-btn');
-          btn.click();
-          return 'clicked:' + btn.textContent;
+          var bs = rows[i].querySelectorAll('.mg-btn');
+          for (var j = 0; j < bs.length; j++) {
+            if (bs[j].textContent === '清晰度') { bs[j].click(); return 'clicked:清晰度'; }
+          }
+          return 'no-quality-button';
         }
       }
       return 'not-found';
@@ -391,9 +423,12 @@ async function main() {
       var host = document.querySelector('#mg-host');
       var btns = host.shadowRoot.querySelectorAll('.mg-variants .mg-btn');
       for (var i = 0; i < btns.length; i++) {
-        if (btns[i].textContent.indexOf('最高码率') >= 0) { btns[i].click(); return 'ok'; }
+        // 多码率给的是「最高码率直接下」，单码率列表直接给「下载（约 X）」
+        if (/下载|最高码率/.test(btns[i].textContent)) { btns[i].click(); return 'ok'; }
       }
-      return 'no-variants:' + host.shadowRoot.querySelectorAll('.mg-variants .mg-btn').length;
+      var all = host.shadowRoot.querySelectorAll('.mg-variants .mg-btn');
+      var texts = [].map.call(all, function(x){ return x.textContent; });
+      return 'no-variants:' + all.length + ' [' + texts.join(' | ') + ']';
     })()`);
     check('点击后进入下载流程', best === 'ok', String(best));
 

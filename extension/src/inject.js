@@ -87,6 +87,21 @@
   }
 
   // 直接写在标签上的地址
+  const IMAGE_NAME_RE = /\.(jpe?g|jfif|png|gif|webp|avif|bmp|svg|ico|heic|heif)(\?|$)/i;
+  const MEDIA_NAME_RE = /\.(mp3|mp4|m4a|m4v|m3u8|webm|flac|wav|ogg|opus|mkv|mov|avi|ts)(\?|$)/i;
+  const LAZY_ATTRS = ['data-src', 'data-original', 'data-lazy', 'data-lazy-src', 'data-actualsrc', 'data-echo'];
+
+  /** 从 srcset 里挑最后一个候选（通常尺寸最大）。 */
+  function pickFromSrcset(value) {
+    if (!value) return '';
+    const parts = String(value).split(',');
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const url = parts[i].trim().split(/\s+/)[0];
+      if (url) return url;
+    }
+    return '';
+  }
+
   function scanDom(root) {
     try {
       const nodes = root.querySelectorAll ? root.querySelectorAll('video, audio, source') : [];
@@ -96,10 +111,32 @@
         const poster = n.getAttribute && n.getAttribute('poster');
         if (poster) post({ url: poster, via: 'dom-poster' });
       }
+
+      // 图片：已加载的用 currentSrc，没加载的看懒加载属性
+      let budget = 120;
+      const imgs = root.querySelectorAll ? root.querySelectorAll('img') : [];
+      for (const img of imgs) {
+        if (budget-- <= 0) break;
+        const src = img.currentSrc || img.getAttribute('src') || '';
+        if (src) post({ url: src, via: 'dom-img', w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+        else {
+          let lazy = '';
+          for (const attr of LAZY_ATTRS) {
+            const v = img.getAttribute && img.getAttribute(attr);
+            if (v) {
+              lazy = v;
+              break;
+            }
+          }
+          if (!lazy) lazy = pickFromSrcset(img.getAttribute && img.getAttribute('srcset'));
+          if (lazy && IMAGE_NAME_RE.test(lazy)) post({ url: lazy, via: 'dom-img-lazy' });
+        }
+      }
+
       const links = root.querySelectorAll ? root.querySelectorAll('a[href]') : [];
       for (const a of links) {
         const href = a.getAttribute('href');
-        if (href && /\.(mp3|mp4|m4a|m3u8|webm|flac|wav|ogg|mkv|mov|avi|ts)(\?|$)/i.test(href)) {
+        if (href && (MEDIA_NAME_RE.test(href) || IMAGE_NAME_RE.test(href))) {
           post({ url: href, via: 'dom-link' });
         }
       }

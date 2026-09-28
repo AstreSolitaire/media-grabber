@@ -322,6 +322,11 @@
   color: #b45309;
 }
 
+.mg-chip-image {
+  background: rgba(168, 85, 247, 0.16);
+  color: #7c3aed;
+}
+
 @media (prefers-color-scheme: dark) {
   .mg-chip-audio {
     color: #4ade80;
@@ -332,6 +337,78 @@
   .mg-chip-hls {
     color: #fcd34d;
   }
+  .mg-chip-image {
+    color: #d8b4fe;
+  }
+}
+
+/* ---------------------------------------------------------------- 分页 */
+
+.mg-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--mg-line);
+}
+
+.mg-tab {
+  border: none;
+  background: transparent;
+  color: var(--mg-muted);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 6px 10px 8px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  touch-action: manipulation;
+}
+
+.mg-tab.is-active {
+  color: var(--mg-accent);
+  border-bottom-color: var(--mg-accent);
+  font-weight: 600;
+}
+
+.mg-tab-n {
+  font-weight: 500;
+  font-size: 12px;
+  background: var(--mg-soft);
+  color: var(--mg-muted);
+  border-radius: 9px;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.mg-tab.is-active .mg-tab-n {
+  background: rgba(37, 99, 235, 0.14);
+  color: var(--mg-accent);
+}
+
+/* ---------------------------------------------------------------- 体积 */
+
+.mg-size {
+  font-weight: 600;
+  color: var(--mg-fg);
+}
+
+.mg-size-est {
+  font-weight: 500;
+  color: var(--mg-muted);
+}
+
+.mg-size-unknown {
+  font-weight: 500;
+  color: var(--mg-muted);
+  opacity: 0.8;
+}
+
+.mg-sep {
+  margin: 0 4px;
+  color: var(--mg-line);
 }
 
 .mg-item-main {
@@ -456,4 +533,166 @@
 
 .mg-foot-btn:active {
   background: var(--mg-soft);
+}
+
+/* ---------------------------------------------------------------- 图片网格 */
+
+.mg-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  align-content: start;
+}
+
+.mg-thumb {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--mg-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--mg-soft);
+}
+
+.mg-thumb img {
+  width: 100%;
+  height: 104px;
+  object-fit: cover;
+  display: block;
+  cursor: zoom-in;
+  background: repeating-conic-gradient(rgba(127, 127, 127, 0.18) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.mg-thumb-broken {
+  min-height: 104px;
+  align-items: center;
+  justify-content: center;
+}
+
+.mg-thumb-fail {
+  font-size: 12px;
+  color: var(--mg-muted);
+  padding: 34px 0;
+}
+
+.mg-thumb-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--mg-bg);
+  font-size: 12px;
+}
+
+.mg-thumb-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mg-muted);
+}
+
+.mg-thumb-info .mg-size {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mg-thumb-dl {
+  flex: none;
+  border: none;
+  background: var(--mg-accent);
+  color: var(--mg-accent-fg);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* ---------------------------------------------------------------- 全屏预览 */
+
+.mg-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  background: rgba(12, 14, 18, 0.94);
+  display: flex;
+  flex-direction: column;
+  color: #f3f4f6;
+}
+
+.mg-viewer[hidden] {
+  display: none;
+}
+
+.mg-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.mg-viewer-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.mg-viewer-title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-viewer-meta {
+  font-size: 12px;
+  color: #b6bcc6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-viewer-bar .mg-icon-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f3f4f6;
+}
+
+.mg-viewer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: auto;
+}
+
+.mg-viewer-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.mg-viewer-media {
+  width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  background: #000;
+}
+
+.mg-viewer-hint {
+  max-width: 320px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #cbd2dc;
 }

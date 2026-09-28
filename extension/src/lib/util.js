@@ -178,6 +178,92 @@ export function formatDuration(sec) {
   return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
 }
 
+/**
+ * 按时长和声明码率估算体积。
+ * HLS 的 BANDWIDTH 是站点自己声明的峰值码率，算出来通常比真实值略大一点，
+ * 所以界面上要标「约」。
+ */
+export function estimateBytes(durationSec, bandwidthBps) {
+  const d = Number(durationSec);
+  const b = Number(bandwidthBps);
+  if (!Number.isFinite(d) || !Number.isFinite(b) || d <= 0 || b <= 0) return 0;
+  return Math.round((d * b) / 8);
+}
+
+/**
+ * 从响应头里取整个文件的总字节数。
+ * 优先看 Content-Range（发过 Range 请求时才有），退回 Content-Length。
+ * @param {(name:string)=>string|null} getHeader
+ */
+export function totalBytesFromHeaders(getHeader) {
+  try {
+    const cr = getHeader('content-range');
+    if (cr) {
+      const m = /\/\s*(\d+)\s*$/.exec(String(cr));
+      if (m) return Number(m[1]) || 0;
+    }
+    const cl = Number(getHeader('content-length'));
+    return Number.isFinite(cl) && cl > 0 ? cl : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 取扩展名（含点），拿不到就返回空串。 */
+export function extOf(url) {
+  try {
+    const m = /\.([a-zA-Z0-9]{1,5})$/.exec(new URL(url).pathname);
+    return m ? '.' + m[1].toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
+/** 上一级目录名，用来区分同一页面上的多条同名资源。 */
+export function parentName(url) {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return '';
+    const dir = decodeURIComponent(parts[parts.length - 2]);
+    return /^[A-Za-z0-9_-]{1,20}$/.test(dir) ? dir : '';
+  } catch {
+    return '';
+  }
+}
+
+/** index.m3u8 / image / 1 这类名字没信息量，遇到就拿页面标题替换。 */
+export function isGenericName(name) {
+  const base = String(name || '').replace(/\.[a-z0-9]{2,5}$/i, '');
+  return /^(index|master|playlist|media|video|audio|stream|main|out|hls|dash|file|movie|\d+|segment|master_?playlist|image|img|photo|pic|picture|thumb|thumbnail|avatar|banner|cover|logo|icon|untitled|download|original|large|medium|small|\d+x)$/i.test(
+    base
+  );
+}
+
+/**
+ * 用页面标题拼一个像样的文件名。
+ * 同目录多条同名时补上级目录名，还不够就补序号。
+ * @param {string} title 页面标题
+ * @param {string} ext 扩展名（含点）
+ * @param {string} url 资源地址，用来取上级目录
+ * @param {Iterable<string>} taken 已经占用的文件名
+ */
+export function composeNameFromTitle(title, ext, url, taken = []) {
+  const base = sanitizeFilename(String(title || '').replace(/\.[a-z0-9]{2,5}$/i, ''), 'media');
+  if (!base) return '';
+  const used = new Set(taken);
+  let candidate = base + ext;
+  if (used.has(candidate)) {
+    const dir = parentName(url);
+    if (dir && !base.endsWith('-' + dir)) candidate = `${base}-${dir}${ext}`;
+    let n = 2;
+    while (used.has(candidate) && n < 50) {
+      candidate = `${base}${dir ? '-' + dir : ''}-${n}${ext}`;
+      n++;
+    }
+  }
+  return candidate;
+}
+
 /** 短 URL，便于在手机上阅读。 */
 export function shortUrl(url, max = 64) {
   const s = String(url || '');

@@ -8,7 +8,7 @@ import path from 'node:path';
 const ROOT = path.join(import.meta.dirname, '..');
 const steps = [
   { name: '静态校验（manifest / 语法 / 消息链路）', cmd: ['tools/verify.mjs'] },
-  { name: '单元与集成测试（解析 / 解密 / 转封装）', cmd: ['--test', 'test/aes.test.mjs', 'test/hls.test.mjs', 'test/remux.test.mjs'] },
+  { name: '单元与集成测试（解析 / 解密 / 转封装）', cmd: ['--test', 'test/aes.test.mjs', 'test/hls.test.mjs', 'test/remux.test.mjs', 'test/features.test.mjs'] },
   { name: '用户脚本构建与结构自检', cmd: ['tools/build-userscript.mjs'] },
 ];
 if (process.env.MG_SKIP_SMOKE !== '1') {

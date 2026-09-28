@@ -10,6 +10,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { ensureFixtures, FIXTURES } from './make-fixtures.mjs';
 import { startServer } from './static-server.mjs';
+import { runPanelAssertions } from './panel-assertions.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.join(import.meta.dirname, '..');
@@ -59,6 +60,12 @@ const GM_SHIM = `
             status: r.status,
             statusText: r.statusText,
             finalUrl: r.url,
+            // 用 fromCharCode 拼 CRLF，避免在模板字符串里写转义
+            responseHeaders: (function () {
+              var a = [];
+              try { r.headers.forEach(function (v, k) { a.push(k + ': ' + v); }); } catch (e) {}
+              return a.join(String.fromCharCode(13) + String.fromCharCode(10));
+            })(),
             response: o.responseType === 'arraybuffer' ? buf : undefined,
             responseText: o.responseType === 'text' ? new TextDecoder().decode(buf) : undefined
           });
@@ -90,6 +97,10 @@ const PAGE = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>用户脚本测试页</title></head>
 <body>
 <h1>userscript smoke</h1>
+<img src="img/photo.png" width="220" alt="photo">
+<img src="img/banner.jpg" width="220" alt="banner">
+<img src="img/tiny-icon.png" width="8" alt="tiny">
+<video id="pv" src="clip.mp4" controls muted width="220"></video>
 <script>
   fetch('ts/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__ts = t.length; });
   fetch('audio.mp3').then(function(r){ return r.blob(); }).then(function(b){ window.__mp3 = b.size; });
@@ -279,10 +290,29 @@ async function main() {
         })});
       })()`);
       return JSON.parse(v || 'null');
-    }, { timeout: 25000, label: '面板出现' });
+    }, { timeout: 25000, label: '面板出现' }).catch(async (e) => {
+      // 面板没出来时，把页面里的真实报错打出来，别只留一个超时
+      console.log('  —— 诊断 ——');
+      console.log('  window.MGUI:', await page.eval('typeof window.MGUI'));
+      console.log('  MGUI 导出:', await page.eval('window.MGUI ? Object.keys(window.MGUI).join(",") : "-"'));
+      console.log('  #mg-host:', await page.eval('!!document.querySelector("#mg-host")'));
+      console.log('  CSS 常量:', await page.eval('typeof CSS'));
+      const errs = page.events
+        .filter((ev) => ev.method === 'Runtime.exceptionThrown' || (ev.method === 'Log.entryAdded' && ev.params.entry.level === 'error'))
+        .map((ev) => ev.params.exceptionDetails?.exception?.description || ev.params.entry?.text || '');
+      console.log('  页面报错:', errs.length ? '\n            ' + errs.slice(0, 5).join('\n            ') : '(无)');
+      const logs = page.events
+        .filter((ev) => ev.method === 'Runtime.consoleAPICalled')
+        .map((ev) => (ev.params.args || []).map((a) => a.value ?? a.description ?? '').join(' '));
+      console.log('  页面日志:', logs.length ? '\n            ' + logs.slice(0, 8).join('\n            ') : '(无)');
+      throw e;
+    });
     check('面板已挂载并列出条目', panel.n >= 3, `${panel.n} 行：${panel.names.join(' | ')}`);
     check('列表里是 m3u8/音频而不是 .ts 分片', panel.urls.some((u) => u.endsWith('.m3u8')) && !panel.urls.some((u) => /\/seg\d+\.ts$/.test(u)));
     check('文件名用了页面标题', panel.names.some((n) => n.includes('用户脚本测试页')), panel.names.join(' | '));
+
+    // ---- 新增：体积显示、图片分页、缩略图与全屏预览 ----
+    await runPanelAssertions({ page, check, sleep, waitFor });
 
     // 点 m3u8 的按钮 → 选最高码率 → 下载
     const clicked = await page.eval(`(function(){
@@ -292,8 +322,11 @@ async function main() {
         var meta = rows[i].querySelector('.mg-meta');
         var t = meta && meta.getAttribute('title');
         if (t && t.indexOf('/ts/index.m3u8') >= 0) {
-          var b = rows[i].querySelector('.mg-btn');
-          b.click(); return 'clicked:' + b.textContent;
+          var bs = rows[i].querySelectorAll('.mg-btn');
+          for (var j = 0; j < bs.length; j++) {
+            if (bs[j].textContent === '清晰度') { bs[j].click(); return 'clicked:清晰度'; }
+          }
+          return 'no-quality-button';
         }
       }
       return 'not-found';

@@ -9,6 +9,11 @@ h3{margin:14px 0 6px}p{color:#aaa;margin:6px 0}</style></head>
 <h3>手机端测试页</h3>
 <p>这一页会请求一条 m3u8（TS 分片 + AAC 音频）。</p>
 <video id="v" controls playsinline></video>
+<p>下面几张图和一段 mp4 用来试预览：</p>
+<img src="img/photo.png" style="width:46%;border-radius:8px;margin-right:6px">
+<img src="img/banner.jpg" style="width:46%;border-radius:8px">
+<img src="img/tiny-icon.png" alt="小图标" style="width:8px;height:8px">
+<video src="clip.mp4" controls playsinline muted style="margin-top:10px"></video>
 <script>
   // 模拟播放器：用 fetch 取播放列表，嗅探脚本应该能抓到
   fetch('ts/index.m3u8').then(function(r){ return r.text(); }).then(function(t){

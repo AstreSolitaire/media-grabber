@@ -155,7 +155,7 @@
       if (hasNow && hadNone && msg.autoOpen && ui) ui.open();
       respond && respond({ ok: true });
     } else if (msg.type === 'mg:variants') {
-      if (ui) ui.setVariants(msg.id, msg.variants);
+      if (ui) ui.setProbe(msg.id, msg.info || null, msg.variants);
       respond && respond({ ok: true });
     } else if (msg.type === 'mg:notice') {
       if (ui) ui.setNotice(msg.text, msg.ms || 3000);

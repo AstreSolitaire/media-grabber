@@ -1,6 +1,6 @@
 // HLS(m3u8) 播放列表解析与分片下载。不依赖浏览器 API，Node 里可直接测试。
 
-import { resolveUrl, retry, orderedPool } from './util.js';
+import { resolveUrl, retry, orderedPool, estimateBytes, totalBytesFromHeaders } from './util.js';
 import { decryptAes128, sequenceToIv, parseHexIv } from './aes.js';
 
 /**
@@ -259,7 +259,7 @@ export function parsePlaylist(text, baseUrl = '') {
 }
 
 function makeFetcher({ fetchImpl, referrer, credentials, extraHeaders, retries }) {
-  return async function get(url, { range = null, signal = null } = {}) {
+  return async function get(url, { range = null, signal = null, timeoutMs = 0 } = {}) {
     const headers = { ...(extraHeaders || {}) };
     if (range) headers['Range'] = `bytes=${range.offset}-${range.offset + range.length - 1}`;
     const init = { method: 'GET', headers, credentials: credentials || 'include', redirect: 'follow' };
@@ -267,11 +267,33 @@ function makeFetcher({ fetchImpl, referrer, credentials, extraHeaders, retries }
       init.referrer = referrer;
       init.referrerPolicy = 'unsafe-url';
     }
-    if (signal) init.signal = signal;
-    const res = await fetchImpl(url, init);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''} - ${url}`.trim());
-    return res;
+    let timer = 0;
+    let ctl = signal;
+    if (!ctl && timeoutMs > 0 && typeof AbortController === 'function') {
+      ctl = new AbortController();
+      timer = setTimeout(() => {
+        try {
+          ctl.abort();
+        } catch {
+          /* 忽略 */
+        }
+      }, timeoutMs);
+    }
+    if (ctl) init.signal = ctl.signal;
+    try {
+      const res = await fetchImpl(url, init);
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''} - ${url}`.trim());
+      return res;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   };
+}
+
+function totalLengthOf(res) {
+  const h = res.headers;
+  if (!h || typeof h.get !== 'function') return 0;
+  return totalBytesFromHeaders((n) => h.get(n));
 }
 
 async function readBody(res, range) {
@@ -283,13 +305,32 @@ async function readBody(res, range) {
   return buf;
 }
 
+/** 取某个媒体播放列表的总时长（只读列表，不下分片）。 */
+async function playlistDuration(get, url, retries) {
+  const text = await retry(async () => (await get(url, { timeoutMs: 8000 })).text(), { retries });
+  const parsed = parsePlaylist(text, url);
+  if (parsed.type !== 'media') return 0;
+  return parsed.duration || parsed.segments.length * parsed.targetDuration;
+}
+
 /**
- * 只读播放列表，不下分片。用于在界面上给用户列清晰度。
+ * 只读播放列表，不下分片。用于在界面上给用户列清晰度，并算出「大概多大」。
+ * 体积是估算值：多码率用每档自己声明的 BANDWIDTH × 时长；
+ * 单码率列表取第一个分片的真实大小按比例放大。
  */
 export async function probeHls(options) {
-  const { url, fetchImpl = globalThis.fetch, referrer = '', credentials = 'include', headers = {}, retries = 2 } = options || {};
+  const {
+    url,
+    fetchImpl = globalThis.fetch,
+    referrer = '',
+    credentials = 'include',
+    headers = {},
+    retries = 2,
+    withSizes = true,
+    maxVariantsToMeasure = 8,
+  } = options || {};
   const get = makeFetcher({ fetchImpl, referrer, credentials, extraHeaders: headers, retries });
-  const text = await retry(async () => (await get(url)).text(), { retries });
+  const text = await retry(async () => (await get(url, { timeoutMs: 15000 })).text(), { retries });
   let info = parsePlaylist(text, url);
   const result = {
     url,
@@ -302,9 +343,12 @@ export async function probeHls(options) {
     encryption: info.encryption,
     renditions: info.renditions,
     variants: [],
+    estimatedBytes: 0,
     container: '',
   };
+
   if (info.type === 'master') {
+    const usable = info.variants.filter((v) => !v.iframe);
     result.variants = info.variants.map((v, i) => ({
       index: i,
       url: v.url,
@@ -314,12 +358,62 @@ export async function probeHls(options) {
       frameRate: v.frameRate,
       iframe: v.iframe,
       label: variantLabel(v, i),
+      durationSec: 0,
+      estimatedBytes: 0,
     }));
-    const audioOnly = result.variants.length > 0 && result.variants.every((v) => !v.resolution && /mp4a|aac|opus/i.test(v.codecs) && !/avc1|hvc1|hev1|av01|vp0?9/i.test(v.codecs));
+
+    // 逐档读一次列表拿时长，好把「大概多大」算出来。档位太多就只算前几档。
+    if (withSizes && result.variants.length) {
+      const todo = result.variants.filter((v) => !v.iframe).slice(0, maxVariantsToMeasure);
+      await orderedPool(
+        todo,
+        async (v) => {
+          try {
+            v.durationSec = await playlistDuration(get, v.url, 1);
+          } catch {
+            v.durationSec = 0;
+          }
+          v.estimatedBytes = estimateBytes(v.durationSec, v.bandwidth);
+          return v;
+        },
+        { concurrency: 4, windowSize: 4, onResult: () => {} }
+      );
+      const measured = result.variants.filter((v) => v.durationSec > 0);
+      if (measured.length) {
+        result.duration = measured[0].durationSec;
+        result.isLive = false;
+      }
+    }
+
+    const audioOnly =
+      result.variants.length > 0 &&
+      result.variants.every((v) => !v.resolution && /mp4a|aac|opus/i.test(v.codecs) && !/avc1|hvc1|hev1|av01|vp0?9/i.test(v.codecs));
     result.audioOnly = audioOnly;
+    const best = result.variants.filter((v) => !v.iframe && v.estimatedBytes).sort((a, b) => b.estimatedBytes - a.estimatedBytes)[0];
+    result.estimatedBytes = best ? best.estimatedBytes : 0;
   } else {
-    result.audioOnly = info.map ? false : false;
+    result.audioOnly = false;
     result.segmentsAreFmp4 = !!info.map;
+    if (withSizes && info.segments.length) {
+      // 单码率列表没有声明码率，取第一个分片的真实大小按时间比例估算
+      const first = info.segments[0];
+      const segDur = first.duration || info.targetDuration || 0;
+      try {
+        const res = await get(first.url, { range: { offset: 0, length: 1 }, timeoutMs: 8000 });
+        const total = totalLengthOf(res);
+        try {
+          if (res.body && typeof res.body.cancel === 'function') await res.body.cancel();
+        } catch {
+          /* 忽略 */
+        }
+        if (total > 0 && segDur > 0 && result.duration > 0) {
+          result.estimatedBytes = Math.round((total / segDur) * result.duration);
+          result.firstSegmentBytes = total;
+        }
+      } catch {
+        /* 拿不到就算了，界面上只显示时长 */
+      }
+    }
   }
   return result;
 }
