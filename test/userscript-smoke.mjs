@@ -52,7 +52,9 @@ const GM_SHIM = `
     var o = opts || {};
     var ctl = new AbortController();
     var timer = setTimeout(function () { try { ctl.abort(); } catch (e) {} if (o.ontimeout) o.ontimeout(); }, o.timeout || 60000);
-    fetch(o.url, { method: o.method || 'GET', headers: o.headers || {}, credentials: 'include', signal: ctl.signal })
+    // 刻意不带 Referer，模拟真实的 GM_xmlhttpRequest：
+    // 这正是防盗链 CDN 会拒绝脚本请求、而播放器能过的那点差别
+    fetch(o.url, { method: o.method || 'GET', headers: o.headers || {}, credentials: 'include', referrerPolicy: 'no-referrer', signal: ctl.signal })
       .then(function (r) {
         return r.arrayBuffer().then(function (buf) {
           clearTimeout(timer);
@@ -105,6 +107,20 @@ const PAGE = `<!doctype html>
   fetch('ts/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__ts = t.length; });
   fetch('audio.mp3').then(function(r){ return r.blob(); }).then(function(b){ window.__mp3 = b.size; });
   fetch('fmp4/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__fmp4 = t.length; });
+  // 由「页面自己的脚本」发起的、显式带 referrer 的请求。
+  // 用它来判断：页面身份请求到底能不能通过 Referer 校验（排除 CDP 注入上下文没有 referrer 的干扰）
+  setTimeout(function () {
+    fetch('protected/index.m3u8', { referrer: location.href, referrerPolicy: 'unsafe-url', credentials: 'include' })
+      .then(function (r) { window.__refFromPage = r.status; })
+      .catch(function (e) { window.__refFromPage = 'ERR ' + e.message; });
+  }, 300);
+  // 分片名伪装成 .mp4 的普通流：用来验证分片会被折叠，而不是混在列表里
+  fetch('mp4named/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__mp4named = t.length; });
+  fetch('mp4named/seg1-v1-a1.mp4').then(function(r){ return r.arrayBuffer(); }).then(function(b){ window.__mp4nameSeg = b.byteLength; });
+  // 这条会被服务端按 Referer 校验：只有页面身份/播放器那种请求才拿得到
+  fetch('protected/index.m3u8').then(function(r){ return r.text(); }).then(function(t){ window.__prot = t.length; });
+  // 播放器也会去取分片；这里模拟一下，好验证分片会被折叠而不是混在列表里
+  fetch('protected/seg1-v1-a1.mp4').then(function(r){ return r.arrayBuffer(); }).then(function(b){ window.__protSeg = b.byteLength; });
   var x = new XMLHttpRequest(); x.open('GET', 'aes/index.m3u8');
   x.onload = function(){ window.__aes = x.responseText.length; }; x.send();
 </script>
@@ -270,9 +286,9 @@ async function main() {
     await page.send('Page.navigate', { url: server.base + 'userscript-smoke.html' });
 
     const state = await waitFor(async () => {
-      const v = await page.eval('JSON.stringify({ts: window.__ts, mp3: window.__mp3, fmp4: window.__fmp4, aes: window.__aes})');
+      const v = await page.eval('JSON.stringify({ts: window.__ts, mp3: window.__mp3, fmp4: window.__fmp4, aes: window.__aes, prot: window.__prot})');
       const o = JSON.parse(v || '{}');
-      return o.ts && o.mp3 && o.fmp4 && o.aes ? o : null;
+      return o.ts && o.mp3 && o.fmp4 && o.aes && o.prot ? o : null;
     }, { timeout: 25000, label: '测试页请求完成' });
     check('测试页加载完成并请求了媒体', true, JSON.stringify(state));
     check('用户脚本已注入（GM 垫片生效）', (await page.eval('window.__mgShim === true')) === true);
@@ -321,7 +337,7 @@ async function main() {
       for (var i = 0; i < rows.length; i++) {
         var meta = rows[i].querySelector('.mg-meta');
         var t = meta && meta.getAttribute('title');
-        if (t && t.indexOf('/ts/index.m3u8') >= 0) {
+        if (t && t.indexOf('/mp4named/index.m3u8') >= 0) {
           var bs = rows[i].querySelectorAll('.mg-btn');
           for (var j = 0; j < bs.length; j++) {
             if (bs[j].textContent === '清晰度') { bs[j].click(); return 'clicked:清晰度'; }
@@ -365,6 +381,80 @@ async function main() {
     }, { timeout: 120000, interval: 1000, label: '文件落盘' });
 
     check('文件已保存', files.length > 0, files.map((f) => `${f.rel}(${f.size}B)`).join(', '));
+
+
+    // 受防盗链保护的那条：点击下载后应给出可操作的提示，而不是干巴巴的 HTTP 410
+    const blockedMsg = await (async () => {
+      const clickedBlocked = await page.eval(`(function(){
+        var sr = document.querySelector('#mg-host').shadowRoot;
+        sr.querySelectorAll('.mg-tab')[0].click();
+        var rows = sr.querySelectorAll('.mg-item');
+        for (var i = 0; i < rows.length; i++) {
+          var m = rows[i].querySelector('.mg-meta');
+          if ((m.getAttribute('title') || '').indexOf('/protected/index.m3u8') >= 0) {
+            var bs = rows[i].querySelectorAll('.mg-btn');
+            for (var j = 0; j < bs.length; j++) {
+              if (bs[j].textContent === '清晰度') { bs[j].click(); return 'ok'; }
+            }
+          }
+        }
+        return 'not-found';
+      })()`);
+      if (clickedBlocked !== 'ok') return '点击失败：' + clickedBlocked;
+      await sleep(1200);
+      const ran = await page.eval(`(function(){
+        var sr = document.querySelector('#mg-host').shadowRoot;
+        var rows = sr.querySelectorAll('.mg-item');
+        for (var i = 0; i < rows.length; i++) {
+          var m = rows[i].querySelector('.mg-meta');
+          if ((m.getAttribute('title') || '').indexOf('/protected/index.m3u8') >= 0) {
+            var bs = rows[i].querySelectorAll('.mg-btn');
+            for (var j = 0; j < bs.length; j++) {
+              if (bs[j].textContent.indexOf('下载') >= 0) { bs[j].click(); return 'ok'; }
+            }
+          }
+        }
+        return 'no-download-button';
+      })()`);
+      if (ran !== 'ok') return '未点到下载：' + ran;
+      for (let i = 0; i < 30; i++) {
+        await sleep(400);
+        // 只看最新那条任务，别读到上一个任务的完成消息
+        const text = await page.eval(`(function(){
+          var sr = document.querySelector('#mg-host').shadowRoot;
+          var j = sr.querySelector('.mg-jobs .mg-job');
+          return j ? j.textContent : '';
+        })()`);
+        if (text && /失败|完成/.test(text)) return text;
+      }
+      return '(没有等到结果)';
+    })();
+    check(
+      '受防盗链保护时给出可操作的提示（而不是干巴巴的 HTTP 410）',
+      /防盗链|刷新/.test(blockedMsg) && !/^HTTP 410$/.test(blockedMsg),
+      blockedMsg.slice(0, 120)
+    );
+
+    // 误列出来的分片应该被折叠到「显示疑似分片」里
+    const fold = JSON.parse(
+      await page.eval(`(function(){
+        var sr = document.querySelector('#mg-host').shadowRoot;
+        var rows = sr.querySelectorAll('.mg-item');
+        var visible = [].map.call(rows, function(r){
+          var m = r.querySelector('.mg-meta'); return m ? (m.getAttribute('title')||'') : '';
+        });
+        var btn = sr.querySelector('.mg-show-all');
+        return JSON.stringify({
+          visible: visible,
+          showAll: btn && !btn.hidden ? btn.textContent : ''
+        });
+      })()`)
+    );
+    check(
+      '伪装成 .mp4 的分片没有混在列表里，被折叠起来了',
+      !fold.visible.some((u) => u.includes('/mp4named/seg')) && /显示疑似分片/.test(fold.showAll),
+      `可见 ${fold.visible.length} 条：${fold.visible.map((u) => u.split('/').slice(-2).join('/')).join(' | ')}；折叠按钮「${fold.showAll}」`
+    );
     const mp4 = files.find((f) => f.rel.endsWith('.mp4'));
     if (mp4) {
       const { stdout } = await exec('ffprobe', ['-hide_banner', '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', mp4.abs]);
@@ -372,7 +462,7 @@ async function main() {
       const v = info.streams.find((s) => s.codec_type === 'video');
       const a = info.streams.find((s) => s.codec_type === 'audio');
       check('MP4 可被 ffprobe 解析', !!v, v ? `${v.codec_name} ${v.width}x${v.height} + ${a ? a.codec_name : '无音频'}` : '无视频流');
-      check('时长接近源（6 秒）', Math.abs(Number(info.format.duration) - 6) < 0.6, `时长 ${info.format.duration}`);
+      check('时长与播放列表声明一致（2 段 × 2 秒）', Math.abs(Number(info.format.duration) - 4) < 0.6, `时长 ${info.format.duration}`);
       const probe = await exec('ffmpeg', ['-hide_banner', '-v', 'warning', '-i', mp4.abs, '-f', 'null', '-']).catch((e) => ({ stderr: e.stderr || '' }));
       const bad = String(probe.stderr || '').split('\n').filter((l) => /non-monotonic|Invalid|corrupt|Error/i.test(l));
       check('完整解码无报错', bad.length === 0, bad.slice(0, 2).join(' / ') || '干净');

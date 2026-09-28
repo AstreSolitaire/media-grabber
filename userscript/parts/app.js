@@ -61,6 +61,7 @@ function gmRequest(url, { method = 'GET', headers = {}, timeout = 120000, respon
       anonymous: false, // 带上目标站点的 Cookie
       onload: (r) => resolve(r),
       onerror: () => reject(new Error('网络请求失败：' + url)),
+      onloadstart: undefined,
       ontimeout: () => reject(new Error('网络请求超时：' + url)),
       onabort: () => reject(new Error('请求已取消')),
     });
@@ -77,12 +78,7 @@ function headersFromRaw(raw) {
   return { get: (name) => map.get(String(name).toLowerCase()) || null };
 }
 
-/**
- * 伪装成 fetch 的样子，好让 hls.js 里已经测过的下载逻辑直接复用。
- * 统一按 arraybuffer 取，需要文本时用 TextDecoder 解，避免发两次请求。
- */
-async function gmFetch(url, init = {}) {
-  const r = await gmRequest(url, { method: init.method || 'GET', headers: { ...(init.headers || {}) } });
+function wrapGmResponse(r, url) {
   const buf = r.response instanceof ArrayBuffer ? new Uint8Array(r.response) : new Uint8Array(0);
   return {
     ok: r.status >= 200 && r.status < 300,
@@ -93,6 +89,56 @@ async function gmFetch(url, init = {}) {
     text: async () => new TextDecoder('utf-8').decode(buf),
     arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
   };
+}
+
+/**
+ * 用「页面自己的身份」发请求：带页面的 Referer、Origin 和 Cookie。
+ *
+ * 这是绕开防盗链的关键——播放器就是这么取的，请求特征完全一致。
+ * 跨域能成是因为播放器本身也要用 XHR 取分片，说明 CDN 对该站点开了 CORS。
+ */
+async function pageFetch(url, init = {}) {
+  const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const res = await W.fetch(url, {
+    method: init.method || 'GET',
+    headers: { ...(init.headers || {}) },
+    credentials: 'include',
+    referrer: location.href,
+    referrerPolicy: 'unsafe-url',
+  });
+  const buf = new Uint8Array(await res.arrayBuffer());
+  return {
+    ok: res.ok,
+    status: res.status,
+    statusText: res.statusText || '',
+    url: res.url || url,
+    headers: res.headers,
+    text: async () => new TextDecoder('utf-8').decode(buf),
+    arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+    viaPage: true,
+  };
+}
+
+/**
+ * 伪装成 fetch 的样子，好让 hls.js 里已经测过的下载逻辑直接复用。
+ * 先用 GM_xmlhttpRequest（不受 CORS 限制、覆盖广）；
+ * 如果被服务端拒绝（401/403/410 这类防盗链常见状态），
+ * 再以页面身份重发一次——很多 CDN 只认播放器发出来的那种请求。
+ */
+async function gmFetch(url, init = {}) {
+  const r = await gmRequest(url, { method: init.method || 'GET', headers: { ...(init.headers || {}) } });
+  if (isBlockedStatus(r.status)) {
+    try {
+      const alt = await pageFetch(url, init);
+      if (alt.ok) {
+        console.log('[媒体嗅探下载器] GM 请求被拒（' + r.status + '），改用页面身份请求成功：' + url);
+        return alt;
+      }
+    } catch (e) {
+      console.log('[媒体嗅探下载器] 页面身份请求也没成功：' + (e && e.message));
+    }
+  }
+  return wrapGmResponse(r, url);
 }
 
 /** 保存成文件。blob + <a download> 在安卓上会落到「下载」目录。 */
@@ -241,6 +287,8 @@ function addHit(raw) {
   };
   // 几百字节的图片基本是图标或埋点像素，默认折叠
   if (item.kind === 'image' && item.size > 0 && item.size < TINY_IMAGE_BYTES) item.suspect = true;
+  // 已经知道某个目录下的这类文件是分片，新出现的也直接折叠
+  if (!item.suspect && knownSegments.dirs.size && isKnownSegment(item.url)) item.suspect = true;
   items.set(id, item);
   return true;
 }
@@ -430,6 +478,52 @@ async function downloadHlsItem(item, variantUrl) {
   }
 }
 
+/**
+ * 把某条流涉及的分片从列表里折叠起来。
+ * 两类都算：
+ *   1. 播放列表里明确列出的分片地址（精确匹配）
+ *   2. 同一目录下名字明显是分片的文件（有些站的 fMP4 分片叫 init-xxx.mp4 / segN-xxx.mp4，
+ *      光看扩展名会被当成独立视频列出来，点下载必然失败）
+ */
+function hideSegmentsOf(info, playlistUrl) {
+  const urls = (info && info.segmentUrls) || [];
+  for (const u of urls) if (knownSegments.urls.size < 3000) knownSegments.urls.add(u);
+  try {
+    const u = new URL(playlistUrl);
+    knownSegments.dirs.add(u.origin + u.pathname.replace(/[^/]*$/, ''));
+  } catch {
+    /* 拿不到目录就算了 */
+  }
+  const changed = foldKnownSegments();
+  if (changed && ui) ui.setNotice('已把这条流的 ' + changed + ' 个分片折叠起来（流本身在上面）', 4000);
+}
+
+/**
+ * 把已知分片折叠起来。
+ * 记下来而不是只折一次：长视频会不断产生新分片，探测之后才出现的分片同样不该混进列表。
+ */
+function foldKnownSegments() {
+  let changed = 0;
+  for (const it of items.values()) {
+    if (it.suspect) continue;
+    if (!isKnownSegment(it.url)) continue;
+    it.suspect = true;
+    changed++;
+  }
+  return changed;
+}
+
+function isKnownSegment(url) {
+  if (knownSegments.urls.has(url)) return true;
+  for (const dir of knownSegments.dirs) {
+    if (url.startsWith(dir) && SEGMENT_NAME_RE.test(url.slice(dir.length))) return true;
+  }
+  return false;
+}
+
+/** 已经确认是分片的地址与目录，之后新出现的同类条目也一并折叠 */
+const knownSegments = { urls: new Set(), dirs: new Set() };
+
 const sizeProbed = new Set();
 
 /**
@@ -473,8 +567,10 @@ async function probeSize(item) {
 async function probeItem(item) {
   try {
     const info = await probeHls({ url: item.url, fetchImpl: gmFetch, retries: 1 });
+    hideSegmentsOf(info, item.url);
     if (ui) ui.setProbe(item.id, info, info.type === 'master' ? info.variants : []);
   } catch (e) {
+    console.log('[媒体嗅探下载器] 读取清晰度失败：' + item.url + ' → ' + ((e && e.message) || e));
     if (ui) ui.setProbe(item.id, { error: String((e && e.message) || e) }, null);
     if (ui) ui.setNotice('读取清晰度失败：' + (e.message || e), 4000);
   }
@@ -598,6 +694,9 @@ function installHooks() {
 
 const IMAGE_NAME_RE = /\.(jpe?g|jfif|png|gif|webp|avif|bmp|svg|ico|heic|heif)(\?|$)/i;
 const MEDIA_NAME_RE = /\.(mp3|mp4|m4a|m4v|m3u8|webm|flac|wav|ogg|opus|mkv|mov|avi|ts)(\?|$)/i;
+/** 文件名看起来就是分片的样子（同目录下才判定） */
+const SEGMENT_NAME_RE = /^(init|seg|chunk|frag|part|slice)[-_]?\d*([-_].*)?\.(mp4|m4s|ts|aac|m4a|mp3|cmfv|cmfa)$/i;
+
 const LAZY_ATTRS = ['data-src', 'data-original', 'data-lazy', 'data-lazy-src', 'data-actualsrc', 'data-echo'];
 
 function pickFromSrcset(value) {

@@ -1,6 +1,6 @@
 // HLS(m3u8) 播放列表解析与分片下载。不依赖浏览器 API，Node 里可直接测试。
 
-import { resolveUrl, retry, orderedPool, estimateBytes, totalBytesFromHeaders } from './util.js';
+import { resolveUrl, retry, orderedPool, estimateBytes, totalBytesFromHeaders, explainHttpStatus, shortUrl } from './util.js';
 import { decryptAes128, sequenceToIv, parseHexIv } from './aes.js';
 
 /**
@@ -282,7 +282,7 @@ function makeFetcher({ fetchImpl, referrer, credentials, extraHeaders, retries }
     if (ctl) init.signal = ctl.signal;
     try {
       const res = await fetchImpl(url, init);
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''} - ${url}`.trim());
+      if (!res.ok) throw new Error(explainHttpStatus(res.status, '取分片') + ' | ' + shortUrl(url, 70));
       return res;
     } finally {
       if (timer) clearTimeout(timer);
@@ -305,11 +305,18 @@ async function readBody(res, range) {
   return buf;
 }
 
-/** 取某个媒体播放列表的总时长（只读列表，不下分片）。 */
-async function playlistDuration(get, url, retries) {
+/**
+ * 取某个媒体播放列表的总时长（只读列表，不下分片）。
+ * 顺便把分片地址收集起来——界面上靠它把误列出来的分片隐藏掉。
+ */
+async function playlistDuration(get, url, retries, collect) {
   const text = await retry(async () => (await get(url, { timeoutMs: 8000 })).text(), { retries });
   const parsed = parsePlaylist(text, url);
   if (parsed.type !== 'media') return 0;
+  if (collect) {
+    if (parsed.map && parsed.map.url) collect(parsed.map.url);
+    for (const seg of parsed.segments) collect(seg.url);
+  }
   return parsed.duration || parsed.segments.length * parsed.targetDuration;
 }
 
@@ -345,6 +352,13 @@ export async function probeHls(options) {
     variants: [],
     estimatedBytes: 0,
     container: '',
+    // 这条流真正的分片地址（有上限），界面据此把误列出来的分片隐藏掉
+    segmentUrls: [],
+  };
+
+  const segmentSet = new Set();
+  const collectSegment = (u) => {
+    if (segmentSet.size < 300) segmentSet.add(u);
   };
 
   if (info.type === 'master') {
@@ -369,7 +383,7 @@ export async function probeHls(options) {
         todo,
         async (v) => {
           try {
-            v.durationSec = await playlistDuration(get, v.url, 1);
+            v.durationSec = await playlistDuration(get, v.url, 1, collectSegment);
           } catch {
             v.durationSec = 0;
           }
@@ -394,6 +408,8 @@ export async function probeHls(options) {
   } else {
     result.audioOnly = false;
     result.segmentsAreFmp4 = !!info.map;
+    if (info.map && info.map.url) collectSegment(info.map.url);
+    for (const seg of info.segments) collectSegment(seg.url);
     if (withSizes && info.segments.length) {
       // 单码率列表没有声明码率，取第一个分片的真实大小按时间比例估算
       const first = info.segments[0];
@@ -415,6 +431,7 @@ export async function probeHls(options) {
       }
     }
   }
+  result.segmentUrls = [...segmentSet];
   return result;
 }
 

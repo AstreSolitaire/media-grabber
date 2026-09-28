@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classify, isImageKind, isMediaKind, worthSniffing, isImageContentType, TINY_IMAGE_BYTES } from '../extension/src/lib/detect.js';
-import { estimateBytes, formatDuration, formatBytes } from '../extension/src/lib/util.js';
+import { estimateBytes, formatDuration, formatBytes, isBlockedStatus, explainHttpStatus } from '../extension/src/lib/util.js';
 import { probeHls } from '../extension/src/lib/hls.js';
 
 test('按 Content-Type 识别图片', () => {
@@ -153,4 +153,37 @@ test('withSizes=false 时不去读每档列表（用于只想看清晰度的场�
   });
   assert.equal(calls, 1, '只应该读一次主列表');
   assert.equal(info.variants[0].estimatedBytes, 0);
+});
+
+test('防盗链相关的状态码判定与说明', () => {
+  for (const c of [401, 403, 410, 451]) assert.ok(isBlockedStatus(c), c + ' 应算被拦');
+  for (const c of [200, 206, 301, 404, 429, 500]) assert.ok(!isBlockedStatus(c), c + ' 不算被拦');
+
+  // 410/403 的说明里必须带上「怎么办」，不能只是个状态码
+  const m410 = explainHttpStatus(410, '取分片');
+  assert.match(m410, /防盗链/);
+  assert.match(m410, /刷新/);
+  assert.match(explainHttpStatus(403), /防盗链/);
+  assert.match(explainHttpStatus(401), /登录/);
+  assert.match(explainHttpStatus(404), /过期/);
+  assert.match(explainHttpStatus(429), /并发/);
+  assert.match(explainHttpStatus(500), /稍后/);
+  assert.equal(explainHttpStatus(418), 'HTTP 418');
+});
+
+test('probeHls 会带回分片地址，供界面折叠误列出来的分片', async () => {
+  const files = {
+    'a/index.m3u8': ['#EXTM3U', '#EXT-X-TARGETDURATION:2', '#EXT-X-MAP:URI="init-v1-a1.mp4"', '#EXTINF:2,', 'seg1-v1-a1.mp4', '#EXTINF:2,', 'seg2-v1-a1.mp4', '#EXT-X-ENDLIST', ''].join(String.fromCharCode(10)),
+    'a/init-v1-a1.mp4': 'x',
+    'a/seg1-v1-a1.mp4': 'y',
+    'a/seg2-v1-a1.mp4': 'z',
+  };
+  const info = await probeHls({
+    url: 'https://x.test/a/index.m3u8',
+    fetchImpl: stubFetch(files, { 'a/init-v1-a1.mp4': { 'content-type': 'video/mp4', 'content-range': 'bytes 0-0/1000' } }),
+  });
+  assert.equal(info.type, 'media');
+  assert.ok(info.segmentUrls.some((u) => u.endsWith('init-v1-a1.mp4')), 'EXT-X-MAP 的 init 也要收进来');
+  assert.ok(info.segmentUrls.some((u) => u.endsWith('seg1-v1-a1.mp4')));
+  assert.ok(info.segmentUrls.some((u) => u.endsWith('seg2-v1-a1.mp4')));
 });

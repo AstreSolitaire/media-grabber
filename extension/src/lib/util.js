@@ -364,3 +364,26 @@ export function concatUint8(chunks, total) {
   }
   return out;
 }
+
+/** 这些状态码通常意味着「服务端不愿意给你」，而不是地址写错了。 */
+export const BLOCKED_HTTP_STATUS = new Set([401, 403, 410, 451]);
+
+export function isBlockedStatus(status) {
+  return BLOCKED_HTTP_STATUS.has(Number(status));
+}
+
+/**
+ * 把 HTTP 状态码翻译成用户能照着做的说明。
+ * 防盗链 CDN 常用 410/403，光看状态码看不出该怎么办，这里补上指引。
+ */
+export function explainHttpStatus(status, context = '') {
+  const code = Number(status);
+  const where = context ? `（${context}）` : '';
+  if (code === 401) return `需要登录后才能取${where}（401）`;
+  if (code === 403) return `服务器拒绝了请求${where}（403）：多半是防盗链校验，回播放页刷新一下再立即下载`;
+  if (code === 410) return `地址已失效或被防盗链拦下${where}（410）：回播放页刷新一下再立即下载`;
+  if (code === 404) return `地址不存在${where}（404）：可能已经过期`;
+  if (code === 429) return `请求太频繁被限流${where}（429）：把并发数调小或稍后再试`;
+  if (code >= 500) return `服务器出错${where}（${code}）：稍后重试`;
+  return `HTTP ${code}${where}`;
+}

@@ -46,13 +46,21 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
       })()`);
       const rows = JSON.parse(v || 'null');
       if (!rows) return null;
-      const hls = rows.filter((r) => /\.m3u8$/i.test(r.url));
+      // 受防盗链保护的那条是「优雅失败」的用例，本来就不该有体积
+      const hls = rows.filter((r) => /\.m3u8$/i.test(r.url) && !r.url.includes('/protected/'));
       // 等 HLS 的自动探测出结果
       if (hls.some((r) => !r.size || r.size === '统计中…')) return null;
       return rows;
     },
     { timeout: 40000, label: '体积信息补齐' }
   ).catch(async (e) => {
+    // 面板日志里能看到脚本自己的诊断输出（比如「GM 请求被拒，改用页面身份」）
+    const NL = String.fromCharCode(10) + '      ';
+    const logs = (page.events || [])
+      .filter((ev) => ev.method === 'Runtime.consoleAPICalled')
+      .map((ev) => (ev.params.args || []).map((a) => a.value ?? a.description ?? '').join(' '))
+      .filter(Boolean);
+    console.log('  面板日志:', logs.length ? NL + logs.slice(-8).join(NL) : '(无)');
     // 体积没补齐时，把后台的报错打出来（扩展端的请求是在 Service Worker 里发的）
     if (swSession) {
       const NL = String.fromCharCode(10) + '            ';
@@ -69,9 +77,12 @@ export async function runPanelAssertions({ page, check, sleep, waitFor, swSessio
     throw e;
   });
 
+  // 受防盗链保护的那条在本测试装置里必然拿不到（CDP 注入的脚本没有 referrer 来源），
+  // 它由「受保护时给出可操作提示」那条断言单独覆盖
+  const sized = sizes.filter((r) => !r.url.includes('/protected/'));
   check(
     '每个资源下面都显示了文件大小',
-    sizes.every((r) => r.size && r.size.length > 0),
+    sized.every((r) => r.size && r.size.length > 0),
     sizes.map((r) => `${r.name}=${r.size}`).join(' | ')
   );
 

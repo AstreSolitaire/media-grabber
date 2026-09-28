@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>防盗链测试页</title>
+<style>
+  body { font: 16px/1.7 -apple-system, system-ui, sans-serif; margin: 0; padding: 18px; background: #111; color: #eee }
+  .ok { color: #4ade80 } .bad { color: #f87171 }
+  code { background: #222; padding: 1px 5px; border-radius: 4px }
+</style>
+</head>
+<body>
+<h3>防盗链测试页</h3>
+<p>这一页会去取一条<strong>校验 Referer</strong>的 m3u8：没有本站 Referer 就返回 <code>410</code>。
+   页面自己取是能过的（播放器就是这么取的），下面显示页面取到的结果。</p>
+<p id="r">正在取…</p>
+<script>
+  // 页面自己取：带本页 Referer，应该成功。插件嗅探到之后，点下载时
+  // 由脚本管理器/扩展去取，就能对比出两者的请求头差异。
+  fetch('protected/index.m3u8')
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function (t) {
+      document.getElementById('r').innerHTML =
+        '<span class="ok">页面自己取：成功</span>（' + t.length + ' 字节）';
+      window.__pageOk = t.length;
+    })
+    .catch(function (e) {
+      document.getElementById('r').innerHTML = '<span class="bad">页面自己取：失败 ' + e.message + '</span>';
+      window.__pageErr = e.message;
+    });
+</script>
+</body>
+</html>

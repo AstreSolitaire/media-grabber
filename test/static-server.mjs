@@ -3,6 +3,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { handleProtected, handleMp4Named } from  './protected-route.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -23,6 +24,9 @@ export async function startServer(root) {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
+      // 先看是不是「防盗链模拟」那组路径
+      if (await handleProtected(req, res, url.pathname, root)) return;
+      if (await handleMp4Named(req, res, url.pathname, root, '/mp4named/')) return;
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
       const file = path.join(root, rel);
       if (!file.startsWith(root)) {

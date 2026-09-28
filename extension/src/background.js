@@ -260,6 +260,8 @@ function addItem(tabId, raw) {
     foundAt: prev ? prev.foundAt : Date.now(),
   };
   if (isGenericName(item.filename)) renameWithTitle(tabId, item, map);
+  // 已经知道某个目录下这类文件是分片，新出现的也直接折叠
+  if (item.kind !== 'image' && isKnownSegment(tabId, item.url)) item.suspect = true;
   // 几百字节的图片基本是图标、分隔线或埋点像素，默认折叠到「小图标」里
   if (item.kind === 'image' && item.size > 0 && item.size < TINY_IMAGE_BYTES) item.suspect = true;
   map.set(id, item);
@@ -395,6 +397,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     itemsByTab.delete(tabId);
     segDirsByTab.delete(tabId);
+    knownSegmentsByTab.delete(tabId);
     schedulePersist();
     pushState(tabId);
   }
@@ -405,6 +408,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   itemsByTab.delete(tabId);
   segDirsByTab.delete(tabId);
+  knownSegmentsByTab.delete(tabId);
   titleByTab.delete(tabId);
   for (const [id, j] of jobs) if (j.tabId === tabId) jobs.delete(id);
   schedulePersist();
@@ -720,6 +724,58 @@ async function referrerFor(tabId, sender) {
   }
 }
 
+/**
+ * 把某条流解析出来的分片折叠起来。
+ * 有些站的 fMP4 分片叫 init-xxx.mp4 / seg-xxx.mp4，光看扩展名会被当成独立视频，
+ * 点下载必然失败，还容易让人以为插件坏了。
+ */
+/** 文件名看起来就是分片的样子（只对同目录下的文件判定，避免误伤） */
+const SEGMENT_NAME_RE = /^(init|seg|chunk|frag|part|slice)[-_]?\d*([-_].*)?\.(mp4|m4s|ts|aac|m4a|mp3|cmfv|cmfa)$/i;
+
+/** tabId -> {urls:Set, dirs:Set}：已确认是分片的地址与目录 */
+const knownSegmentsByTab = new Map();
+
+function segmentsFor(tabId) {
+  let entry = knownSegmentsByTab.get(tabId);
+  if (!entry) {
+    entry = { urls: new Set(), dirs: new Set() };
+    knownSegmentsByTab.set(tabId, entry);
+  }
+  return entry;
+}
+
+function isKnownSegment(tabId, url) {
+  const entry = knownSegmentsByTab.get(tabId);
+  if (!entry) return false;
+  if (entry.urls.has(url)) return true;
+  for (const dir of entry.dirs) {
+    if (url.startsWith(dir) && SEGMENT_NAME_RE.test(url.slice(dir.length))) return true;
+  }
+  return false;
+}
+
+function hideSegmentsOf(tabId, info, playlistUrl) {
+  const map = itemsByTab.get(tabId);
+  if (!map) return;
+  const entry = segmentsFor(tabId);
+  for (const u of (info && info.segmentUrls) || []) {
+    if (entry.urls.size < 3000) entry.urls.add(u);
+  }
+  try {
+    const u = new URL(playlistUrl || (info && info.url) || '');
+    entry.dirs.add(u.origin + u.pathname.replace(/[^/]*$/, ''));
+  } catch {
+    /* 拿不到目录就算了 */
+  }
+  let changed = 0;
+  for (const item of map.values()) {
+    if (item.suspect || !isKnownSegment(tabId, item.url)) continue;
+    item.suspect = true;
+    changed++;
+  }
+  if (changed) schedulePersist();
+}
+
 const HANDLERS = {
   async 'mg:sniff'(msg, sender) {
     await hydrate();
@@ -777,12 +833,14 @@ const HANDLERS = {
     try {
       const info = await probeHls({ url, fetchImpl: fetch, referrer, retries: 1 });
       if (tabId != null) {
+        hideSegmentsOf(tabId, info, item ? item.url : msg.url);
         await notify(tabId, {
           type: 'mg:variants',
           id: msg.id,
           variants: info.type === 'master' ? info.variants : [],
           info,
         });
+        pushState(tabId);
       }
       return info;
     } catch (e) {

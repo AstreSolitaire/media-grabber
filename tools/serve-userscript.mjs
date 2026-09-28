@@ -4,6 +4,7 @@
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { handleProtected, handleMp4Named } from  '../test/protected-route.mjs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..');
@@ -38,12 +39,26 @@ const MIME = {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  // 把请求头打出来：用来搞清楚用户脚本发出的请求到底带了什么（Referer / Origin / Cookie）
+  const via = ((req.headers['x-mg-via'] ) || '').toString();
+  console.log(
+    `[请求] ${req.method} ${url.pathname}${url.search}` +
+      ` | Referer=${req.headers.referer || '(无)'}` +
+      ` | Origin=${req.headers.origin || '(无)'}` +
+      ` | Cookie=${req.headers.cookie ? '有' : '(无)'}` +
+      ` | UA=${(req.headers['user-agent'] || '').slice(0, 40)}`
+  );
   // 把测试素材也发出去，方便在手机上跑真实测试
+  // 手机侧走 /f/protected/，复用与端到端测试同一份防盗链模拟
+  if (await handleProtected(req, res, url.pathname, FIXTURES, '/f/protected/')) return;
+  if (await handleMp4Named(req, res, url.pathname, FIXTURES, '/f/mp4named/')) return;
+
   if (url.pathname.startsWith('/f/')) {
     const rel = decodeURIComponent(url.pathname.slice(3));
     // 测试页放在仓库里（不在生成的素材目录），但要让它的相对路径仍落在 /f/ 下，
     // 页面里的 img/xxx、clip.mp4 才能取到素材
-    const file = rel === 'phone-test.html' ? path.join(ROOT, 'test', 'phone-test.html') : path.join(FIXTURES, rel);
+    const inRepo = rel === 'phone-test.html' || rel === 'phone-hotlink.html';
+    const file = inRepo ? path.join(ROOT, 'test', rel) : path.join(FIXTURES, rel);
     const allowed = file.startsWith(FIXTURES) || file.startsWith(path.join(ROOT, 'test'));
     if (!allowed) {
       res.writeHead(403).end('forbidden');
